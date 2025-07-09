@@ -126,6 +126,7 @@ CUDA_VISIBLE_DEVICES=0 python ArchaicSeeker3.1-mamba \
     -m <path/to/map.txt> \
     -o <path/to/output_folder> \
     [OPTIONS]
+```
 
 **Command-Line Arguments:**
 
