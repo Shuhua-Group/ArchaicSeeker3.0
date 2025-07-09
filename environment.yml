@@ -1,0 +1,26 @@
+name: as3_mamba
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - git
+  - pytorch=2.2.0
+  - torchvision=0.17.0
+  - pytorch-cuda=12.1
+  - scikit-learn=1.3.2
+  - pandas=2.0.3
+  - numpy=1.24.4
+  - h5py=3.10.0
+  - tqdm=4.66.1
+  - pysam=0.23.3
+  - scikit-allel
+  - torchmetrics
+  - opencv
+  - transformers=4.46.3
+  - pip:
+    - mamba-ssm
+    - causal-conv1d

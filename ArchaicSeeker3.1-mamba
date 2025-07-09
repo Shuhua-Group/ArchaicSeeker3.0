@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+import argparse
+import pickle
+import time
+import os
+import sys
+import logging
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
+
+import torch
+from torch.utils.data import DataLoader
+import warnings
+import pysam
+
+from src.dataloaders import ReferencePanelDataset, reference_panel_collate
+from src.models import AgnosticModelInferNoSmoother, AncestryLevelConvSmoother
+from src.stepsagnostic import inference_and_write, build_transforms
+
+class LocalTimeFormatter(logging.Formatter):
+    CST = timezone(timedelta(hours=8))
+
+    def formatTime(self, record, datefmt=None):
+        utc_dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
+        local_dt = utc_dt.astimezone(self.CST)
+        if datefmt:
+            return local_dt.strftime(datefmt)
+        else:
+            return local_dt.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
+
+def setup_logging(log_folder):
+    log_filename = os.path.join(log_folder, "run.log")
+    log_formatter = LocalTimeFormatter("%(asctime)s [%(levelname)-5.5s]  %(message)s")
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear()
+    file_handler = logging.FileHandler(log_filename)
+    file_handler.setFormatter(log_formatter)
+    root_logger.addHandler(file_handler)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(log_formatter)
+    root_logger.addHandler(console_handler)
+
+def setup_arg_parser():
+    parser = argparse.ArgumentParser(description="ArchaicSeeker3.0 - Professional Edition")
+
+    BASE_DIR = Path(__file__).resolve().parent
+    BASE_MODEL_PATH = BASE_DIR / "exp" / "Basemodel_Mamba_4096" / "models" / "best_model.pth"
+    SMOOTHER_MODEL_PATH = BASE_DIR / "exp" / "Smoother_4096_512_Kernel_4096" / "models" / "best_model.pth"
+
+    parser.add_argument("--base-model-cp", type=str, default=BASE_MODEL_PATH, help="Path to the base model checkpoint file.")
+    parser.add_argument("--base-model-args", type=str, default=None, help="Path to the base model arguments pckl file. If None, it's derived from the checkpoint path.")
+    parser.add_argument("--smoother-model-cp", type=str, default=SMOOTHER_MODEL_PATH, help="Path to the smoother model checkpoint file.")
+    parser.add_argument("--smoother-model-args", type=str, default=None, help="Path to the smoother model arguments pckl file. If None, it's derived from the checkpoint path.")
+    
+    parser.add_argument("--stride", type=int, default=512, help="Window stride for inference.")
+    parser.add_argument("--merge", type=int, default=5000, help="Merge threshold for segments, default: 5000bp.")
+    parser.add_argument("--anc", type=int, default=0, help="Archaic parameter setting.")
+
+    parser.add_argument("--test-mixed", '-t', type=str, required=True, help="Path to the PHASED test mixed VCF file (Required).")
+    parser.add_argument("--reference", '-r', type=str, required=True, help="Path to reference VCF file (Archaic and African) (Required).")
+    parser.add_argument("--map", '-m', type=str, required=True, help="Path to the reference map file (Required).")
+    parser.add_argument('--out-folder', '-o', type=str, required=True, help="Output folder for the results (Required).")
+    
+    parser.add_argument("--target-chunk-size", type=int, default=None, 
+                        help="Process target samples in chunks of this size to save memory. If None, all samples are processed at once. (e.g., 10)")
+    
+    return parser
+
+def check_required_files(args):
+    logging.info("Checking for existence of required input files...")
+    required_files = [
+        args.test_mixed, 
+        args.reference, 
+        args.map, 
+        args.base_model_cp, 
+        args.smoother_model_cp
+    ]
+    for f_path in required_files:
+        if not os.path.exists(f_path):
+            logging.error(f"Required input file not found: {f_path}")
+            sys.exit(1) 
+    logging.info("All required files found.")
+
+def load_and_prepare_args(args):
+    if not args.base_model_args:
+        base_model_cp_str = str(args.base_model_cp)
+        args.base_model_args = base_model_cp_str.replace('models/best_model.pth', 'args.pckl').replace('models/last_model.pth', 'args.pckl')
+    
+    if not args.smoother_model_args:
+        smoother_model_cp_str = str(args.smoother_model_cp)
+        args.smoother_model_args = smoother_model_cp_str.replace('models/best_model.pth', 'args.pckl').replace('models/last_model.pth', 'args.pckl')
+
+    logging.info(f"Loading base model arguments from: {args.base_model_args}")
+    try:
+        with open(args.base_model_args, "rb") as f:
+            base_model_args = pickle.load(f)
+            base_model_args.win_stride = args.stride
+    except FileNotFoundError:
+        logging.error(f"Argument file not found: {args.base_model_args}")
+        sys.exit(1)
+    except Exception as e:
+        logging.error(f"Failed to load or process arguments from {args.base_model_args}: {e}")
+        sys.exit(1)
+
+    logging.info(f"Loading smoother model arguments from: {args.smoother_model_args}")
+    try:
+        with open(args.smoother_model_args, "rb") as f:
+            smoother_model_args = pickle.load(f)
+            smoother_model_args.win_stride = args.stride
+    except FileNotFoundError:
+        logging.error(f"Argument file not found: {args.smoother_model_args}")
+        sys.exit(1)
+    except Exception as e:
+        logging.error(f"Failed to load or process arguments from {args.smoother_model_args}: {e}")
+        sys.exit(1)
+        
+    return base_model_args, smoother_model_args
+
+def load_models(base_model_cp, smoother_model_cp, base_model_args, device):
+    logging.info("Loading BaseModel...")
+    try:
+        baseModel = AgnosticModelInferNoSmoother(base_model_args)
+        base_original_state_dict = torch.load(base_model_cp, map_location=device)
+        baseModel.load_state_dict(base_original_state_dict)
+        baseModel = baseModel.to(device)
+        baseModel.eval()
+    except Exception as e:
+        logging.error(f"Failed to load BaseModel from {base_model_cp}: {e}")
+        sys.exit(1)
+
+    logging.info("Loading SmootherModel...")
+    try:
+        smootherModel = AncestryLevelConvSmoother(in_planes=4, planes=32, kernel_size=8192)
+        smoother_original_state_dict = torch.load(smoother_model_cp, map_location=device)
+        smootherModel.load_state_dict(smoother_original_state_dict)
+        smootherModel = smootherModel.to(device)
+        smootherModel.eval()
+    except Exception as e:
+        logging.error(f"Failed to load SmootherModel from {smoother_model_cp}: {e}")
+        sys.exit(1)
+        
+    return baseModel, smootherModel
+
+def main():
+    start_time = time.time()
+    
+    parser = setup_arg_parser()
+    args = parser.parse_args()
+
+    os.makedirs(args.out_folder, exist_ok=True)
+    setup_logging(args.out_folder)
+    
+    warnings.filterwarnings("ignore", category=UserWarning)
+
+    logging.info("======================================================")
+    logging.info("               ArchaicSeeker 3.1 Mamba Started              ")
+    logging.info("======================================================")
+    logging.info(f"All logs will be saved to: {os.path.join(args.out_folder, 'run.log')}")
+    
+    check_required_files(args)
+    
+    base_model_args, smoother_model_args = load_and_prepare_args(args)
+    logging.info(f"Base model args loaded: {vars(base_model_args)}")
+    logging.info(f"Smoother model args loaded: {vars(smoother_model_args)}")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logging.info(f"Using device: {device}")
+    if os.environ.get("CUDA_VISIBLE_DEVICES"):
+        logging.info(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES')}")
+    
+    baseModel, smootherModel = load_models(args.base_model_cp, args.smoother_model_cp, base_model_args, device)
+    logging.info("All models loaded successfully.")
+
+    logging.info(f"Reading sample list from target VCF: {args.test_mixed}")
+    try:
+        with pysam.VariantFile(args.test_mixed) as vcf_file:
+            all_target_samples = list(vcf_file.header.samples)
+        if not all_target_samples:
+            raise ValueError("No samples found in the target VCF file.")
+    except Exception as e:
+        logging.error(f"Failed to read sample names from target VCF {args.test_mixed}: {e}", exc_info=True)
+        sys.exit(1)
+
+    logging.info("Creating complete haplotype ID to sample name map...")
+    hap_id_to_name_map = {
+        i: f"{all_target_samples[i // 2]}_{i % 2 + 1}" 
+        for i in range(len(all_target_samples) * 2)
+    }
+
+    total_samples = len(all_target_samples)
+    chunk_size = args.target_chunk_size if args.target_chunk_size and args.target_chunk_size > 0 else total_samples
+    num_chunks = (total_samples + chunk_size - 1) // chunk_size
+    
+    logging.info(f"Total target samples: {total_samples}. Processing in {num_chunks} chunk(s) of size {chunk_size}.")
+
+    output_txt_path = os.path.join(args.out_folder, 'introgression_prediction.txt')
+    output_bed_path = os.path.join(args.out_folder, 'introgression_prediction.bed')
+    
+    open(output_txt_path, 'w').close()
+    open(output_bed_path, 'w').close()
+
+    current_index_counter = 0
+    current_index_filter_counter = 0
+
+    for i in range(num_chunks):
+        chunk_start_index = i * chunk_size
+        chunk_end_index = chunk_start_index + chunk_size
+        sample_chunk_list = all_target_samples[chunk_start_index:chunk_end_index]
+        
+        logging.info(f"--- Processing Chunk {i+1}/{num_chunks} (Samples {chunk_start_index+1} to {min(chunk_end_index, total_samples)}) ---")
+        
+        try:
+            genetic_map = getattr(args, 'genetic_map', None)
+            
+            test_dataset = ReferencePanelDataset(
+                mixed_file_path=args.test_mixed,
+                samples_to_load=sample_chunk_list,
+                reference_panel_vcf=args.reference,
+                reference_panel_map=args.map,                 
+                n_refs_per_class=base_model_args.n_refs,      
+                transforms=build_transforms(base_model_args), 
+                genetic_map=genetic_map,
+                single_arc=args.anc
+            )
+            test_loader = DataLoader(test_dataset, batch_size=1, collate_fn=reference_panel_collate, shuffle=False)
+            info = test_dataset.info
+            
+            current_index_counter, current_index_filter_counter = inference_and_write(
+                baseModel, smootherModel, test_loader, args, 
+                output_txt_path, output_bed_path, info, 
+                hap_id_to_name_map,
+                is_first_chunk=(i == 0),
+                current_index=current_index_counter,
+                current_index_filter=current_index_filter_counter
+            )
+        except Exception as e:
+            logging.error(f"An error occurred while processing chunk {i+1}. Aborting.", exc_info=True)
+            sys.exit(1)
+
+    logging.info("All chunks processed successfully.")
+    logging.info(f"Final output files are located in: {args.out_folder}")
+    
+    total_time = time.time() - start_time
+    duration_str = str(timedelta(seconds=int(total_time)))
+    logging.info("======================================================")
+    logging.info(f"      Application finished in {duration_str}      ")
+    logging.info("======================================================")
+
+if __name__ == '__main__':
+    main()
