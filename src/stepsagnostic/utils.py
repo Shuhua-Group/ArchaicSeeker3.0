@@ -98,14 +98,14 @@ def ancestry_metrics(prediction, target, binary=False):
 
 
 def ancestry_metrics_label_based(prediction, target, binary=False):
-    prediction = prediction.view(-1)  # 将 (1, 1, 329260) 转换为 (329260,)
-    target = target.view(-1)  # 将 (1, 329260) 转换为 (329260,)
+    prediction = prediction.view(-1)
+    target = target.view(-1)
 
     if prediction.ndimension() == 1 and prediction.shape[0] == target.shape[0]:
         accuracy = (prediction == target).sum().float() / prediction.size(0)
 
-        target = target.cpu().numpy()  # 转换为 numpy
-        prediction = prediction.cpu().numpy()  # 转换为 numpy
+        target = target.cpu().numpy()
+        prediction = prediction.cpu().numpy()
 
         recall = recall_score(target, prediction, average='macro', zero_division=0)
         precision = precision_score(target, prediction, average='macro', zero_division=0)

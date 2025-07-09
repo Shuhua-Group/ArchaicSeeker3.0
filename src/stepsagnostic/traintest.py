@@ -1390,13 +1390,9 @@ def inference_and_write(base_model, smoother_model, test_loader, args, pred_file
 
 def inference_and_write(base_model, smoother_model, test_loader, args, 
                         pred_file_path, bed_file_path, info, 
-                        hap_id_to_name_map, # <-- 新增：接收完整的ID映射
+                        hap_id_to_name_map,
                         is_first_chunk, current_index, current_index_filter):
-    """
-    执行推理并将结果写入文件。
-    此最终版本协同解决了分块处理中的ID映射错位和索引不连续的问题。
-    """
-    # --- 初始设置 ---
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     base_model.eval().to(device)
     smoother_model.eval().to(device)
@@ -1404,8 +1400,6 @@ def inference_and_write(base_model, smoother_model, test_loader, args,
     chm = info['chm'][0]
     original_pos = [int(pos) for pos in info['pos']]
     original_pos_array = np.array(original_pos, dtype=int)
-    
-    # --- 已删除函数内部的映射创建逻辑 ---
     
     max_pos = original_pos_array.max()
     pos_to_idx_array = -np.ones(max_pos + 1, dtype=int)
@@ -1416,12 +1410,11 @@ def inference_and_write(base_model, smoother_model, test_loader, args,
                             total=len(test_loader), 
                             desc=f"Processing Chromosome {chm} (Chunk)", 
                             unit="batch",
-                            leave=False) # 在循环结束后清理此块的进度条
+                            leave=False) 
         
         for i, batch in progress_bar:
             batch = to_device(batch, device)
             
-            # --- 模型推理与数据后处理 (无任何省略) ---
             basemodel_output = base_model(batch, test=True, infer=True)
             pad_num = basemodel_output.get("pad_num", 0)
             preds = basemodel_output["predictions"]
@@ -1439,7 +1432,6 @@ def inference_and_write(base_model, smoother_model, test_loader, args,
             if pad_num > 0:
                 predicted_labels = predicted_labels[:, :-pad_num]
 
-            # --- 数据对齐与写入.txt文件 ---
             filtered_pos_batch = batch["pos"]
             sample_label = predicted_labels[0].cpu().numpy().astype(int)
             sample_filtered_pos = filtered_pos_batch[0].cpu().numpy().astype(int)
@@ -1454,10 +1446,8 @@ def inference_and_write(base_model, smoother_model, test_loader, args,
             labels[mapped_indices] = valid_labels
             df = pd.DataFrame([labels], columns=original_pos) 
             
-            # 使用从外部传入的 current_index 作为起始行号
             df.index = range(current_index, current_index + len(df))
             
-            # 根据 is_first_chunk 判断写入模式和是否写header
             txt_mode = 'a'
             write_header = False
             if is_first_chunk and i == 0:
@@ -1465,20 +1455,17 @@ def inference_and_write(base_model, smoother_model, test_loader, args,
                 write_header = True
             
             df.to_csv(pred_file_path, sep="\t", mode=txt_mode, header=write_header, index=True)
-            current_index += len(df) # 更新索引计数器
+            current_index += len(df) 
 
-            # --- 准备和写入BED文件 ---
             a = predicted_labels.cpu().numpy().astype(int)
             df_filtered = pd.DataFrame(a, columns=sample_filtered_pos) 
             
-            # 使用从外部传入的 current_index_filter 作为起始行号，确保连续性
             df_filtered.index = range(current_index_filter, current_index_filter + len(df_filtered))
             
             df_T = df_filtered.T.reset_index(drop=False)
             df_T.rename(columns={'index': 'POS'}, inplace=True)
             haplotype_columns = [col for col in df_T.columns if col != 'POS']
 
-            # 调用 find_introgression_segments (包含所有参数)
             introgression_segments_df = find_introgression_segments(
                 df_T, 
                 haplotype_columns,
@@ -1499,7 +1486,6 @@ def inference_and_write(base_model, smoother_model, test_loader, args,
                     'n_snps_label2': 'african_snps'
                 })
 
-                # 使用从外部传入的、完整的 hap_id_to_name_map
                 final_bed_df['sample_hap_id'] = final_bed_df['haplotype'].map(hap_id_to_name_map)
                 final_bed_df['sample_hap_id'].fillna('Unknown_HapID', inplace=True)
 
@@ -1511,17 +1497,14 @@ def inference_and_write(base_model, smoother_model, test_loader, args,
                 
                 final_bed_df = final_bed_df.sort_values(by=['sample_hap_id', 'chr', 'start_pos', 'end_pos'])
                 
-                # 根据 is_first_chunk 判断写入模式
                 bed_mode = 'a'
                 if is_first_chunk and i == 0:
                     bed_mode = 'w'
                 
                 final_bed_df.to_csv(bed_file_path, sep='\t', mode=bed_mode, index=False, header=False)
 
-            # 更新另一个索引计数器
             current_index_filter += len(df_filtered)
 
-    # --- 函数结束前，返回更新后的索引计数器 ---
     return current_index, current_index_filter
 
 class CustomBatchSampler(Sampler):

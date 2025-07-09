@@ -70,11 +70,11 @@ class GeneralModelTransformerWithAttention(nn.Module):
         self.output_linear = nn.Linear(model_dim, output_dim)
 
     def forward(self, inp):
-        z = inp.permute(2, 0, 1)  # Change input shape to (seq_len, batch, input_dim)
-        z = f.relu(self.input_linear(z)) # Apply the input linear layer
+        z = inp.permute(2, 0, 1) 
+        z = f.relu(self.input_linear(z)) 
         attn_maps = []
         for layer in self.transformer_encoder.layers:
-            z, attn = layer(z)  # Apply the Transformer layer and capture attention
+            z, attn = layer(z)  
             attn_maps.append(attn)
         z = self.output_linear(z)
         z = z.permute(1, 2, 0)
@@ -94,10 +94,10 @@ class ClassficationTransformer(nn.Module):
 
 
     def forward(self, inp):
-        z = inp.permute(2, 0, 1)  # Change input shape to (seq_len, batch, input_dim)
-        z = f.relu(self.input_linear(z)) # Apply the input linear layer
-        z = self.pos_encoder(z)   # Apply positional encoding
-        z = self.transformer_encoder(z)  # Apply the Transformer
+        z = inp.permute(2, 0, 1)  
+        z = f.relu(self.input_linear(z)) 
+        z = self.pos_encoder(z)  
+        z = self.transformer_encoder(z)  
         z = z.mean(dim=0)
         z = self.fc(z)
         return z
@@ -124,9 +124,9 @@ class GeneralModelTransformerwithstep(nn.Module):
 
     def forward(self, inp):
         z = inp.permute(2, 0, 1)  # (seq_len, batch, input_dim)
-        z = f.relu(self.input_linear(z))  # Apply input linear
-        z = self.pos_encoder(z)  # Add positional encoding
-        z = self.transformer_encoder(z)  # Apply Transformer
+        z = f.relu(self.input_linear(z))  
+        z = self.pos_encoder(z)  
+        z = self.transformer_encoder(z)  
 
         z = z.permute(1, 2, 0)  # (batch, model_dim, seq_len)
         z = self.length_adjust(z)  
@@ -184,11 +184,9 @@ class GeneralModelMamba(nn.Module):
         self.output_linear = nn.Linear(model_dim, output_dim)
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
-        # inp: (B, C_in, L)  →  (L, B, C_in)
         z = inp.permute(2, 0, 1)          # (L, B, C_in)
         z = f.relu(self.input_linear(z))  # (L, B, D)
 
-        # Mamba 使用 (B, L, D)
         z = z.permute(1, 0, 2)            # (B, L, D)
         for blk in self.blocks:
             z = blk(z)                    # (B, L, D)

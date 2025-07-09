@@ -336,7 +336,7 @@ class AgnosticModel(nn.Module):
         self.unet = GeneralModelMamba(
                                         input_dim=7,
                                         output_dim=3,
-                                        model_dim=192,          # 对齐之前的 hidden size 192
+                                        model_dim=192,          
                                         num_layers=8,
                                         conv_kernel=4,       
                                     )
@@ -706,14 +706,12 @@ def process_in_batches(inputs, model, batch_size):
     # Calculate the number of batches
     total_batches = inputs.size(0) // batch_size + (1 if inputs.size(0) % batch_size != 0 else 0)
 
-    # Process each batch
     outputs = []
     for i in range(total_batches):
         batch_inputs = inputs[i * batch_size:(i + 1) * batch_size]
         batch_outputs = model(batch_inputs)
         outputs.append(batch_outputs)
 
-    # Concatenate all batch outputs
     return torch.cat(outputs, dim=0)
 
 
@@ -721,7 +719,6 @@ def multiply_ref_panel_stack_ancestries(mixed, ref_panel):
     all_refs = [None] * len(ref_panel.keys())
     for ancestry in ref_panel.keys():
         all_refs[ancestry] = ref_panel[ancestry]
-    # all_refs = [ref_panel[ancestry] for ancestry in ref_panel.keys()]
     all_refs = torch.cat(all_refs, dim=0)
 
     return all_refs * mixed.unsqueeze(0)
@@ -760,19 +757,15 @@ def interpolate_and_pad(inp, upsample_factor, target_len):
     return inp
 
 def change_the_features(old_data):
-    # Extract the first row and expand its dimensions
     first_row = old_data[:, 0, :].unsqueeze(1)
     
-    # Extract all rows except the first one
     other_rows = old_data[:, 1:, :]
     
-    # Create conditions based on broadcasting
     condition_1 = (first_row == 0) & (other_rows == 1)
     condition_2 = (first_row == 1) & (other_rows == 0)
     condition_3 = (first_row == 0) & (other_rows == 0)
     condition_4 = (first_row == 1) & (other_rows == 1)
     
-    # Apply conditions and set values in the new_data tensor
     new_data = torch.zeros_like(other_rows).to(old_data.device)
     new_data[condition_1] = 0
     new_data[condition_2] = 1/3
