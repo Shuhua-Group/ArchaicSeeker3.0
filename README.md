@@ -126,3 +126,64 @@ CUDA_VISIBLE_DEVICES=0 python ArchaicSeeker3.1-mamba \
     -m <path/to/map.txt> \
     -o <path/to/output_folder> \
     [OPTIONS]
+
+**Command-Line Arguments:**
+
+| Argument | Shorthand | Description | Default |
+| :--- | :--- | :--- | :--- |
+| **`--test-mixed`** | `-t` | **Required.** Path to the phased VCF file of the target samples. | `None` |
+| **`--reference`** | `-r` | **Required.** Path to the reference panel VCF file (archaic & African). | `None` |
+| **`--map`** | `-m` | **Required.** Path to the reference map file. | `None` |
+| **`--out-folder`** | `-o` | **Required.** Path to the folder where results will be saved. | `None` |
+| `--base-model-cp`| | Path to the base model checkpoint (`.pth`). | Defaults to `./exp/Basemodel.../best_model.pth` |
+| `--smoother-model-cp`| | Path to the smoother model checkpoint (`.pth`). | Defaults to `./exp/Smoother.../best_model.pth` |
+| `--stride` | | The stride of the sliding window for model inference. | `512` |
+| `--merge` | | The distance threshold (bp) for merging adjacent introgressed segments. | `5000` |
+| `--anc` | | Archaic parameter setting for analysis. | `0` |
+| `--target-chunk-size`| | Process target samples in chunks of this size to reduce memory usage. `None` means all at once. | `None` |
+| `--base-model-args`| | Path to the base model's arguments file (`.pckl`). If `None`, auto-detected. | `None` |
+| `--smoother-model-args`| | Path to the smoother model's arguments file (`.pckl`). If `None`, auto-detected. | `None` |
+
+
+### Parallel Analysis via Shell Script
+
+For convenience, we provide an example script `run_analysis.sh` to parallelize the analysis of a whole genome (chromosomes 1-22) across multiple GPUs.
+
+1.  **Configure the script**:
+    Open `run_analysis.sh` and modify the variables at the top: `wk_path`, `aseek` (which should point to your `main.py` script), and `gpus`.
+2.  **Run the script**:
+    ```bash
+    bash run_analysis.sh
+    ```
+
+## Output Format
+
+The primary output files are `introgression_prediction.bed` and `introgression_prediction.txt`.
+
+### 1. `introgression_prediction.bed`
+This file lists the predicted archaic introgression segments.
+
+| Column | Description |
+| :--- | :--- |
+| **Chr** | Chromosome |
+| **Start** | Start position of the segment (0-based) |
+| **End** | End position of the segment (0-based) |
+| **Haplotype** | Haplotype index relative to the start of a processed chunk. |
+| **Archaic** | Predicted source: `1`=Denisovan, `2`=Neanderthal, `3`=Mosaic |
+| **#SNP** | Number of SNPs within the segment |
+| **Score** | Mean score of all SNPs in the segment. A higher score indicates higher confidence. A score > 0.4 is recommended. |
+| **#SNP_Archaic1** | Number of SNPs supporting Archaic Source 1 |
+| **#SNP_Archaic2** | Number of SNPs supporting Archaic Source 2 |
+| **SampleID_HapID** | A globally unique identifier combining the original Sample ID and haplotype (1 or 2). |
+
+### 2. `introgression_prediction.txt`
+This file provides SNP-level prediction results.
+
+-   **Rows**: Haplotype indices.
+-   **Columns**: Variant positions.
+-   **Values**: Predicted ancestry: `0`=African (non-introgressed), `1`=Denisovan, `2`=Neanderthal.
+
+## Contact
+
+For questions, bug reports, or collaboration inquiries, please visit our lab website:
+**[https://pog.fudan.edu.cn/](https://pog.fudan.edu.cn/)**
