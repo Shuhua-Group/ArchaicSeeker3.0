@@ -81,9 +81,9 @@ This is an alternative for users familiar with conda.
 
 ## Data Preparation
 
-For your convenience, we provide pre-processed archaic reference data panels.
+For your convenience, we provide archaic reference data panels.
 
-* Download the data for either **GRCh38** or **CHM13** from our Zenodo record:
+* Download the data for either **GRCh38** or **CHM13** from Zenodo record:
     **[https://zenodo.org/records/14552025](https://zenodo.org/records/14552025)**
 
 ---
@@ -103,7 +103,6 @@ This step is only necessary if you want to process your own raw VCF files instea
     ```
 This script will normalize and filter your VCF files, generating the `Final_Target_VCFs`, `Final_Ref_VCFs`, and `reference.map` files required for the next step.
 
-> **Note:** If you downloaded the pre-processed data from Zenodo, you can **skip this step**.
 
 ### Step 2: Running ArchaicSeeker3 Analysis
 
