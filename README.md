@@ -1,4 +1,5 @@
-![image](https://github.com/user-attachments/assets/27e98a19-f411-4707-bd21-2e27b8bdcea8)
+![image](https://github.com/user-attachments/assets/f84037c2-e4fb-41f0-bb72-797c741b2c4d)
+
 ![image](https://github.com/user-attachments/assets/73b2cd44-6940-4e9e-beff-a02e03612d46)
 
 # ArchaicSeeker3.1-mamba
