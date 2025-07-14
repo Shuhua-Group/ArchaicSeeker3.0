@@ -21,7 +21,8 @@ DATA_IN_PATH="examples/raw_data_preprocessed_output"
 ANALYSIS_OUT_ROOT="examples/aseeker3_results_$(date +%Y%m%d)"
 
 # 4. GPU Configuration: list the IDs of the GPUs you want to use.
-GPUS=(0 1 2 3)
+#GPUS=(0 1 2 3)
+GPUS=(0)
 
 readonly NGPUS=${#GPUS[@]}
 readonly TARGET_VCF_DIR="${DATA_IN_PATH}/Final_Target_VCFs"
