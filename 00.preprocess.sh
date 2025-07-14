@@ -1,209 +1,200 @@
 #!/usr/bin/env bash
-# ===================================================================================
 #
-# FUNCTION:   AS3 input data preparation pipeline.
+# FUNCTION:   VCF preparation pipeline for archaic and modern human data.
 #
-# STRATEGY:   1. Process modern human data first to generate a target site list
-#                by filtering on Minor Allele Frequency (MAF).
-#             2. Use the site list to efficiently filter archaic data, avoiding
-#                a full, time-consuming normalization of archaic genomes.
-#             3. Integrate all steps into a highly parallel, per-chromosome workflow.
-#
-# VERSION:    3.0 - Stable Release
-#
-# ===================================================================================
 
-# Exit immediately if a command exits with a non-zero status, if an undefined
-# variable is used, or if a command in a pipeline fails.
 set -euo pipefail
 
 # ===================================================================================
-# --- USER CONFIGURATION ---
-#
-# IMPORTANT: Please modify the variables in this section to match your system's
-#            environment and file locations.
+# User Configuration
+# NOTE: Modify the variables in this section to match your system's environment
+#       and file locations.
 # ===================================================================================
 
 # --- Computational Resources ---
-
-# Maximum number of chromosomes to process in parallel.
-# For whole-genome analysis, this is typically 22.
-MAX_PROCS=22
-
-# Number of threads allocated to each bcftools job.
-# Total threads used will be approximately MAX_PROCS * THREADS_PER_JOB.
+MAX_PROCS=1
 THREADS_PER_JOB=6
 
 # --- Input File Paths ---
-
-# Full path to the reference genome FASTA file (e.g., T2T-CHM13v2.0).
-REF_GENOME="/path/to/your/reference_genome.fa"
-
-# Directory containing Denisovan VCF files, split by chromosome.
-# The script expects files like: ${DENISOVAN_VCF_DIR}/output_se.chm13.chr${K}.vcf.gz
-DENISOVAN_VCF_DIR="/path/to/your/denisovan_vcfs"
-
-# Directory containing Neanderthal VCF files, split by chromosome.
-# The script expects files like: ${NEANDERTHAL_VCF_DIR}/output_se.chm13.chr${K}.vcf.gz
-NEANDERTHAL_VCF_DIR="/path/to/your/neanderthal_vcfs"
-
-# Directory containing modern human VCF files (e.g., KGP, HPRC), split by chromosome.
-# The script expects files like: ${MODERN_HUMAN_VCF_DIR}/CPC.HPRC.Phase1.CHM13v2.chr${K}.filtered.vcf.gz
-MODERN_HUMAN_VCF_DIR="/path/to/your/modern_human_vcfs"
-
-# Directory containing the sample list files.
-SAMPLE_LISTS_DIR="/path/to/your/sample_lists"
+REF_GENOME="examples/raw_data/reference_fa/GRCh38.22_demo.fa"
+DENISOVAN_VCF_DIR="examples/raw_data/vcf"
+NEANDERTHAL_VCF_DIR="examples/raw_data/vcf"
+MODERN_HUMAN_VCF_DIR="examples/raw_data/vcf"
+SAMPLE_LISTS_DIR="examples/raw_data/sample_info"
+MASK_BED_DIR="examples/raw_data/high_quality_region_GRCh38"
 
 # --- Input File Names ---
-
-# Filename for the list of African (e.g., YRI) samples (one sample ID per line).
-YRI_SAMPLES_FILE="afr_samples.txt"
-
-# Filename for the list of target population samples.
-TARGET_SAMPLES_FILE="target_samples.txt"
-
-# Filename for the list of samples that will form the final reference panel (e.g., Archaic + YRI).
-REF_SAMPLES_FILE="ref_samples.txt"
+YRI_SAMPLES_FILE="YRI.sample.txt"
+TARGET_SAMPLES_FILE="CHB.sample.txt"
+REF_SAMPLES_FILE="ref.sample.txt"
 
 # --- Output Directory ---
-
-# Main directory where all outputs and temporary files will be stored.
-MAIN_OUTPUT_DIR="/path/to/your/analysis_output_directory"
+MAIN_OUTPUT_DIR="examples/raw_data_preprocessed_output"
 
 # ===================================================================================
-# --- END OF USER CONFIGURATION ---
-# ===================================================================================
 
-# --- Derived Variables ---
-readonly CHROMOSOMES=($(seq 1 22))
+# Use `readonly CHROMOSOMES=($(seq 1 22))` for a full production run.
+readonly CHROMOSOMES=(22) # Using a single chromosome for the example run.
 readonly FINAL_REF_DIR="${MAIN_OUTPUT_DIR}/Final_Ref_VCFs"
 readonly FINAL_TARGET_DIR="${MAIN_OUTPUT_DIR}/Final_Target_VCFs"
 readonly YRI_LIST="${SAMPLE_LISTS_DIR}/${YRI_SAMPLES_FILE}"
 readonly TARGET_LIST="${SAMPLE_LISTS_DIR}/${TARGET_SAMPLES_FILE}"
 readonly REF_SAMPLES_LIST="${SAMPLE_LISTS_DIR}/${REF_SAMPLES_FILE}"
 
-# --- Main Processing Function ---
 process_chromosome() {
+    local -a MASK_PREFIXES=($MASK_PREFIXES_STR)
     local K=$1
     local start_time=$(date +%s)
     
-    echo "🚀 [CHR ${K}] Processing started. PID: $$"
+    echo "[CHR ${K}] Processing started."
 
     local TMP_DIR="${MAIN_OUTPUT_DIR}/temp/chr${K}"
     mkdir -p "$TMP_DIR"
-    # Ensure temporary directory is cleaned up upon function exit
-    trap 'echo "🧹 [CHR ${K}] Cleaning up temporary directory: ${TMP_DIR}"; rm -rf "${TMP_DIR}";' RETURN
+    trap 'rm -rf "${TMP_DIR}"' RETURN
 
-    # Construct full paths to input files for this chromosome
-    local den_in="${DENISOVAN_VCF_DIR}/output_se.chm13.chr${K}.vcf.gz"
-    local nea_in="${NEANDERTHAL_VCF_DIR}/output_se.chm13.chr${K}.vcf.gz"
-    local kgp_in="${MODERN_HUMAN_VCF_DIR}/CPC.HPRC.Phase1.CHM13v2.chr${K}.filtered.vcf.gz"
+    local den_in="${DENISOVAN_VCF_DIR}/Den.hg38.${K}.part.vcf.gz"
+    local nea_in="${NEANDERTHAL_VCF_DIR}/Nean.hg38.${K}.part.vcf.gz"
+    local modern_in="${MODERN_HUMAN_VCF_DIR}/KGP.GRCh38.PASS.snps.biallelic.shapeit4.${K}.part.vcf.gz"
 
-    # Validate that all required input files exist before starting
-    for f in "$den_in" "$nea_in" "$kgp_in" "$YRI_LIST" "$TARGET_LIST" "$REF_SAMPLES_LIST"; do
+    for f in "$den_in" "$nea_in" "$modern_in" "$YRI_LIST" "$TARGET_LIST" "$REF_SAMPLES_LIST"; do
         if [[ ! -f "$f" ]]; then
-            echo "❌ [CHR ${K}] ERROR: Required input file not found: $f" >&2
+            echo "[CHR ${K}] ERROR: Required input file not found: $f" >&2
             return 1
         fi
     done
 
-    echo "[CHR ${K}] Stage 1: Processing modern human data..."
-    local kgp_norm="${TMP_DIR}/kgp.norm.vcf.gz"
-    bcftools norm --threads "${THREADS_PER_JOB}" -f "$REF_GENOME" -c s -Oz -o "$kgp_norm" "$kgp_in"
-    
-    local kgp_target_norm="${TMP_DIR}/kgp.target.norm.vcf.gz"
-    bcftools view --threads "${THREADS_PER_JOB}" -S "$TARGET_LIST" -Oz -o "$kgp_target_norm" "$kgp_norm"
-    
-    local kgp_target_filtered="${TMP_DIR}/kgp.target.filtered.sites.vcf.gz"
-    echo "     -> Filtering target population by MAF>=0.001 (critical step)..."
-    bcftools view --threads "${THREADS_PER_JOB}" -i 'MAF>=0.001' -Oz -o "$kgp_target_filtered" "$kgp_target_norm"
-    bcftools index -t "$kgp_target_filtered"
-    
-    local kgp_yri_norm="${TMP_DIR}/kgp.yri.norm.vcf.gz"
-    echo "     -> Extracting YRI samples..."
-    bcftools view --threads "${THREADS_PER_JOB}" -S "$YRI_LIST" -Oz -o "$kgp_yri_norm" "$kgp_norm"
-    bcftools index -t "$kgp_yri_norm"
+    echo "[CHR ${K}] Stage 1: Creating master site list."
+    local modern_biallelic_norm="${TMP_DIR}/modern.biallelic.norm.vcf.gz"
+    bcftools norm --threads "${THREADS_PER_JOB}" -f "$REF_GENOME" -c s "$modern_in" | \
+        bcftools view -i 'N_ALT==1' -Oz -o "$modern_biallelic_norm"
+    bcftools index -t "$modern_biallelic_norm"
 
-    echo "[CHR ${K}] Stage 2: Efficiently filtering and normalizing archaic data..."
-    local den_norm_subset="${TMP_DIR}/denisova.norm.subset.vcf.gz"
-    local nea_norm_subset="${TMP_DIR}/neanderthal.norm.subset.vcf.gz"
-    
-    echo "     -> Filtering & normalizing Denisovan..."
-    bcftools view --threads "${THREADS_PER_JOB}" -T "$kgp_target_filtered" "$den_in" | \
-    bcftools norm --threads "${THREADS_PER_JOB}" -f "$REF_GENOME" -c s -Oz -o "$den_norm_subset"
-    bcftools index -t "$den_norm_subset"
+    local target_sites_vcf="${TMP_DIR}/target.sites.vcf.gz"
+    bcftools view --threads "${THREADS_PER_JOB}" -S "$TARGET_LIST" "$modern_biallelic_norm" | \
+        bcftools view -i 'MAF>=0.001' -Oz -o "$target_sites_vcf"
+    bcftools index -t "$target_sites_vcf"
 
-    echo "     -> Filtering & normalizing Neanderthal..."
-    bcftools view --threads "${THREADS_PER_JOB}" -T "$kgp_target_filtered" "$nea_in" | \
-    bcftools norm --threads "${THREADS_PER_JOB}" -f "$REF_GENOME" -c s -Oz -o "$nea_norm_subset"
-    bcftools index -t "$nea_norm_subset"
+    echo "[CHR ${K}] Stage 2: Preparing harmonized, GT-only VCFs."
+    local den_ready_to_merge="${TMP_DIR}/den.ready.vcf.gz"
+    bcftools view --threads "${THREADS_PER_JOB}" -T "$target_sites_vcf" "$den_in" | \
+        bcftools norm --threads "${THREADS_PER_JOB}" -f "$REF_GENOME" -c s | \
+        bcftools annotate -x INFO,^FORMAT/GT -Oz -o "$den_ready_to_merge"
+    bcftools index -t "$den_ready_to_merge"
 
-    echo "[CHR ${K}] Stage 3: Merging, intersecting, and final filtering..."
-    
-    local archaic_yri_merged="${TMP_DIR}/Archaic.YRI.merged.vcf.gz"
-    echo "     -> Merging Archaic + YRI..."
+    local nea_ready_to_merge="${TMP_DIR}/nea.ready.vcf.gz"
+    bcftools view --threads "${THREADS_PER_JOB}" -T "$target_sites_vcf" "$nea_in" | \
+        bcftools norm --threads "${THREADS_PER_JOB}" -f "$REF_GENOME" -c s | \
+        bcftools annotate -x INFO,^FORMAT/GT -Oz -o "$nea_ready_to_merge"
+    bcftools index -t "$nea_ready_to_merge"
+
+    local yri_ready_to_merge="${TMP_DIR}/yri.ready.vcf.gz"
+    bcftools view --threads "${THREADS_PER_JOB}" -S "$YRI_LIST" "$modern_biallelic_norm" | \
+        bcftools view -T "$target_sites_vcf" | \
+        bcftools annotate -x INFO,^FORMAT/GT -Oz -o "$yri_ready_to_merge"
+    bcftools index -t "$yri_ready_to_merge"
+
+    echo "[CHR ${K}] Stage 3: Merging and filtering."
+    local archaic_yri_merged="${TMP_DIR}/archaic_yri.merged.vcf.gz"
     bcftools merge --threads "${THREADS_PER_JOB}" --missing-to-ref -0 -Oz \
-        -o "$archaic_yri_merged" "$den_norm_subset" "$nea_norm_subset" "$kgp_yri_norm"
+        -o "$archaic_yri_merged" "$den_ready_to_merge" "$nea_ready_to_merge" "$yri_ready_to_merge"
     bcftools index -t "$archaic_yri_merged"
         
     local isec_dir="${TMP_DIR}/isec"
-    echo "     -> Intersecting sites between target population and (Archaic+YRI)..."
     bcftools isec -p "$isec_dir" -n=2 -c none --threads "${THREADS_PER_JOB}" -Oz \
-        "$kgp_target_filtered" "$archaic_yri_merged"
+        "$target_sites_vcf" "$archaic_yri_merged"
     
     local final_merged="${TMP_DIR}/final.merged.vcf.gz"
-    echo "     -> Merging intersection results..."
     bcftools merge --threads "${THREADS_PER_JOB}" --force-samples -Oz \
         -o "$final_merged" "${isec_dir}/0000.vcf.gz" "${isec_dir}/0001.vcf.gz"
     
     local final_filtered="${TMP_DIR}/final.filtered.vcf.gz"
-    echo "     -> Filtering non-variant sites using 'N_ALT > 0'..."
     bcftools view --threads "${THREADS_PER_JOB}" -i 'N_ALT > 0' \
         -Oz -o "$final_filtered" "$final_merged"
     bcftools index -t "$final_filtered"
 
-    echo "[CHR ${K}] Stage 4: Generating final split VCF files..."
+    echo "[CHR ${K}] Stage 4: Applying high-quality region masks."
+    local masked_vcf_input="$final_filtered"
+    local final_masked_vcf=""
+
+    for prefix in "${MASK_PREFIXES[@]}"; do
+        local mask_bed_file="${MASK_BED_DIR}/${prefix}_chr${K}.bed"
+        if [[ ! -f "$mask_bed_file" ]]; then
+            echo "[CHR ${K}] ERROR: Mask file not found: ${mask_bed_file}" >&2
+            return 1
+        fi
+        
+        final_masked_vcf="${TMP_DIR}/final.masked.${prefix}.vcf.gz"
+        echo "    -> Applying mask: ${mask_bed_file}"
+        bcftools view --threads "${THREADS_PER_JOB}" -T "${mask_bed_file}" \
+            -Oz -o "$final_masked_vcf" "$masked_vcf_input"
+        bcftools index -t "$final_masked_vcf"
+        
+        masked_vcf_input="$final_masked_vcf"
+    done
     
-    local final_ref_vcf="${FINAL_REF_DIR}/Archaic.AFR.ref.chr${K}.vcf.gz"
+    if [[ -z "$final_masked_vcf" ]]; then
+        echo "    -> INFO: No masks applied, proceeding with unmasked data."
+        final_masked_vcf="$final_filtered" 
+    fi
+
+    echo "[CHR ${K}] Stage 5: Generating final split VCFs."
+    local final_ref_vcf="${FINAL_REF_DIR}/ref_panel.chr${K}.vcf.gz"
     bcftools view --threads "${THREADS_PER_JOB}" -S "$REF_SAMPLES_LIST" --force-samples \
-        -Oz -o "$final_ref_vcf" "$final_filtered"
+        -Oz -o "$final_ref_vcf" "$final_masked_vcf"
     bcftools index -t "$final_ref_vcf"
     
-    local final_target_vcf="${FINAL_TARGET_DIR}/HGDPTGP_target.chr${K}.vcf.gz"
+    local final_target_vcf="${FINAL_TARGET_DIR}/target_panel.chr${K}.vcf.gz"
     bcftools view --threads "${THREADS_PER_JOB}" -S "$TARGET_LIST" --force-samples \
-        -Oz -o "$final_target_vcf" "$final_filtered"
+        -Oz -o "$final_target_vcf" "$final_masked_vcf"
     bcftools index -t "$final_target_vcf"
 
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
-    echo "[CHR ${K}] Processing complete! Duration: ${duration} seconds. Final files are in ${FINAL_REF_DIR} and ${FINAL_TARGET_DIR}"
+    echo "[CHR ${K}] Processing complete. Duration: ${duration} seconds."
 }
+
+MASK_PREFIXES=("N" "D")
+MASK_PREFIXES_STR="${MASK_PREFIXES[*]}"
+export MASK_PREFIXES_STR
 
 export -f process_chromosome
 export REF_GENOME DENISOVAN_VCF_DIR NEANDERTHAL_VCF_DIR MODERN_HUMAN_VCF_DIR \
        SAMPLE_LISTS_DIR YRI_LIST TARGET_LIST REF_SAMPLES_LIST \
-       MAIN_OUTPUT_DIR FINAL_REF_DIR FINAL_TARGET_DIR THREADS_PER_JOB
+       MAIN_OUTPUT_DIR FINAL_REF_DIR FINAL_TARGET_DIR THREADS_PER_JOB \
+       MASK_BED_DIR
 
 mkdir -p "$MAIN_OUTPUT_DIR/temp" "$FINAL_REF_DIR" "$FINAL_TARGET_DIR"
 
-if [[ ! -f "$REF_GENOME" ]]; then
-    echo "FATAL ERROR: Reference genome file not found at: $REF_GENOME"
-    exit 1
-fi
-if [[ ! -d "$SAMPLE_LISTS_DIR" ]]; then
-    echo "FATAL ERROR: Directory for sample lists not found at: $SAMPLE_LISTS_DIR"
-    exit 1
-fi
+if [[ ! -f "$REF_GENOME" ]]; then echo "FATAL ERROR: Reference genome not found: $REF_GENOME"; exit 1; fi
+if [[ ! -d "$SAMPLE_LISTS_DIR" ]]; then echo "FATAL ERROR: Sample lists directory not found: $SAMPLE_LISTS_DIR"; exit 1; fi
+if [[ ! -d "$MASK_BED_DIR" ]]; then echo "FATAL ERROR: Mask BED directory not found: $MASK_BED_DIR"; exit 1; fi
 
-echo "==========================================================="
-echo "Max Parallel Jobs: ${MAX_PROCS}"
-echo "Threads per Job:   ${THREADS_PER_JOB}"
-echo "Main Output Dir:   ${MAIN_OUTPUT_DIR}"
-echo "==========================================================="
+echo "Starting VCF preparation pipeline..."
 
-# Use xargs to run the process_chromosome function in parallel for each chromosome
 printf "%s\n" "${CHROMOSOMES[@]}" | xargs -n 1 -P "${MAX_PROCS}" -I {} bash -c "process_chromosome {}"
 
-echo "========================================"
-echo "All chromosome processing tasks are complete!"
-echo "========================================"
+echo "All chromosome processing tasks are complete."
+
+echo "Generating reference map file..."
+REFERENCE_MAP_FILE="${MAIN_OUTPUT_DIR}/reference.map"
+
+awk '{print $1 "\tAFR"}' "$YRI_LIST" > "$REFERENCE_MAP_FILE"
+
+REPRESENTATIVE_CHR=${CHROMOSOMES[0]}
+DEN_VCF_FOR_SAMPLES="${DENISOVAN_VCF_DIR}/Den.hg38.${REPRESENTATIVE_CHR}.part.vcf.gz"
+NEA_VCF_FOR_SAMPLES="${NEANDERTHAL_VCF_DIR}/Nean.hg38.${REPRESENTATIVE_CHR}.part.vcf.gz"
+
+if [[ -f "$DEN_VCF_FOR_SAMPLES" ]]; then
+    bcftools query -l "$DEN_VCF_FOR_SAMPLES" | awk '{print $1 "\tDEN"}' >> "$REFERENCE_MAP_FILE"
+else
+    echo "WARNING: Could not find Denisovan VCF to extract samples: ${DEN_VCF_FOR_SAMPLES}"
+fi
+
+if [[ -f "$NEA_VCF_FOR_SAMPLES" ]]; then
+    bcftools query -l "$NEA_VCF_FOR_SAMPLES" | awk '{print $1 "\tNEAN"}' >> "$REFERENCE_MAP_FILE"
+else
+    echo "WARNING: Could not find Neanderthal VCF to extract samples: ${NEA_VCF_FOR_SAMPLES}"
+fi
+
+echo "Reference map file created at: ${REFERENCE_MAP_FILE}"
+echo "Pipeline finished."

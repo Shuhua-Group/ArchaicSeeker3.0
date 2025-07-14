@@ -1,3 +1,6 @@
+![image](https://github.com/user-attachments/assets/97fe2564-a749-4ea9-8221-30e52db32d46)
+![image](https://github.com/user-attachments/assets/73b2cd44-6940-4e9e-beff-a02e03612d46)
+
 # ArchaicSeeker3.1-mamba
 
 This project is developed and maintained by the **[Shuhua Xu's Research Group](https://pog.fudan.edu.cn/)**, School of Life Sciences, Fudan University.

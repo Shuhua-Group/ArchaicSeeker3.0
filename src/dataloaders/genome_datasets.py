@@ -448,7 +448,7 @@ class ReferencePanelDataset(Dataset):
         with pysam.VariantFile(self.mixed_file_path) as vcf:
             target_pos = np.array([rec.pos for rec in vcf.fetch()], dtype=np.int32)
 
-c
+
         logging.info("Finding intersection of SNPs between reference and target...")
         common_positions, ref_indices, target_indices = np.intersect1d(
             ref_pos, target_pos, return_indices=True
