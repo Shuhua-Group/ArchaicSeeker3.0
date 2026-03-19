@@ -1,0 +1,95 @@
+import sys
+sys.path.insert(0, './')
+
+import numpy as np
+from utils.utils import *
+
+
+configfile: "config/snakemake/config.yaml"
+
+output_dir = config["output_dir"]
+replicates = config["replicates"]
+
+np.random.seed(config["seed"])
+
+seed_list = np.random.random_integers(1,2**31,replicates)
+demo_model_list = config["2src_demo_models"]
+nref_list = [10, 50]
+ntgt_list = [1, 10]
+
+
+rule all:
+    input:
+        expand(
+            output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Mamba_Smoother_4096_2048_5216.bed",
+            demog=demo_model_list, nref=nref_list, ntgt=ntgt_list, seed=seed_list
+        ),
+        expand(
+            output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Mamba_Smoother_4096_2048_5216.mosaic.bed",
+            demog=demo_model_list, nref=nref_list, ntgt=ntgt_list, seed=seed_list
+        )
+
+rule process_bed:
+    input:
+        tgt_vcf = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.tgt.vcf.gz",
+        intro_raw = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/introgression_prediction.bed",
+        mosaic_raw = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/mosaic_merged.bed",
+    output:
+        intro_bed = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Mamba_Smoother_4096_2048_5216.bed",
+        mosaic_bed = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Mamba_Smoother_4096_2048_5216.mosaic.bed",
+    params:
+        out_path = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}",
+    threads: 1,
+    resources: time_min=3000, mem_mb=10000, cpus=1,
+    shell:
+        """
+        mkdir -p {params.out_path}
+        cd {params.out_path}
+
+        bcftools query -l {input.tgt_vcf} > tgt_samples.txt
+
+        awk '{{
+            for (i = 0; i < NF; i++) {{
+                hap = i * 2
+                print hap, $i "_1"
+                print hap + 1, $i "_2"
+            }}
+        }}' tgt_samples.txt > hapmap.txt
+
+        awk 'NR==FNR {{map[$1]=$2; next}} {{$4 = map[$4]; print}}' hapmap.txt {input.intro_raw} > {output.intro_bed}
+        awk 'NR==FNR {{map[$1]=$2; next}} {{$4 = map[$4]; print}}' hapmap.txt {input.mosaic_raw} > {output.mosaic_bed}
+        """
+
+rule Mamba_Smoother_4096_2048_5216:
+    input:
+        map_file = "/home/linhuanyu/83_AS3_SSTAR/sstar-analysis/config/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/reference_map.txt",
+        ref_vcf = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.ref.vcf.gz",
+        tgt_vcf = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.tgt.vcf.gz",
+    output:
+        intro_raw = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/introgression_prediction.bed",
+        mosaic_raw = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/mosaic_merged.bed",
+    params:
+        out_path = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}",
+        merge_distance = 5216,
+    resources: gpu=1,
+    shell:
+        """
+        export CUDA_VISIBLE_DEVICES=$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits | sort -nk2 | head -n1 | cut -d, -f1)
+
+        mkdir -p {params.out_path}
+        cd {params.out_path}
+
+        module load anaconda3/2022.10
+        conda activate ArchaicSeeker3
+
+        /usr/bin/time -v \
+            /share/apps/cluster/anaconda3-2022.10/envs/ArchaicSeeker3/bin/python \
+            /share/apps/gene/ArchaicSeeker-mamba-smoother/ArchaicSeeker3-mamba-smoother \
+            -t {input.tgt_vcf} \
+            -r {input.ref_vcf} \
+            -m {input.map_file} \
+            -o {params.out_path} \
+            --merge {params.merge_distance} \
+            1> {params.out_path}/as3.stdout.log \
+            2> {params.out_path}/as3.stderr.log
+        """

@@ -1,0 +1,24 @@
+Building DAG of jobs...
+Using shell: /usr/bin/bash
+Provided cores: 1 (use --cores to define parallelism)
+Rules claiming more threads will be scaled down.
+Job stats:
+job                 count    min threads    max threads
+----------------  -------  -------------  -------------
+accuracy_summary        1              1              1
+total                   1              1              1
+
+Select jobs to execute...
+
+[Wed Apr 23 03:21:56 2025]
+rule accuracy_summary:
+    input: /home/linhuanyu/share1/20_AS3/results/inference/ArchaicSeeker2.0/existing_accuracy_files.txt
+    output: /home/linhuanyu/share1/20_AS3/results/inference/ArchaicSeeker2.0/archaicseeker2_1src_accuracy.txt
+    jobid: 0
+    reason: Missing output files: /home/linhuanyu/share1/20_AS3/results/inference/ArchaicSeeker2.0/archaicseeker2_1src_accuracy.txt
+    resources: tmpdir=/tmp
+
+[Wed Apr 23 03:22:05 2025]
+Finished job 0.
+1 of 1 steps (100%) done
+Complete log: .snakemake/log/2025-04-23T032154.302625.snakemake.log

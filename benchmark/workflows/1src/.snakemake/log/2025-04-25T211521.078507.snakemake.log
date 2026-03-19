@@ -1,0 +1,24 @@
+Building DAG of jobs...
+Using shell: /usr/bin/bash
+Provided cores: 1 (use --cores to define parallelism)
+Rules claiming more threads will be scaled down.
+Job stats:
+job                 count    min threads    max threads
+----------------  -------  -------------  -------------
+accuracy_summary        1              1              1
+total                   1              1              1
+
+Select jobs to execute...
+
+[Fri Apr 25 21:15:38 2025]
+rule accuracy_summary:
+    input: /home/linhuanyu/share1/20_AS3/results/inference/ArchaicSeeker3.0/existing_as3_accuracy_files.txt
+    output: /home/linhuanyu/share1/20_AS3/results/inference/ArchaicSeeker3.0/AS3_Transformer_Smoother_200_100_1000_4803_2src_accuracy.txt
+    jobid: 0
+    reason: Missing output files: /home/linhuanyu/share1/20_AS3/results/inference/ArchaicSeeker3.0/AS3_Transformer_Smoother_200_100_1000_4803_2src_accuracy.txt
+    resources: tmpdir=/tmp
+
+[Fri Apr 25 21:17:27 2025]
+Finished job 0.
+1 of 1 steps (100%) done
+Complete log: .snakemake/log/2025-04-25T211521.078507.snakemake.log

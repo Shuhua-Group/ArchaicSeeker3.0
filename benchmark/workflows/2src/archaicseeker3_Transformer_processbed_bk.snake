@@ -1,0 +1,84 @@
+import sys
+sys.path.insert(0, './')
+
+import numpy as np
+from utils.utils import *
+
+configfile: "config/snakemake/config.yaml"
+
+output_dir = config["output_dir"]
+replicates = config["replicates"]
+
+np.random.seed(config["seed"])
+
+seed_list = np.random.random_integers(1, 2**31, replicates)
+demo_model_list = config["2src_demo_models"]
+nref_list = [10, 50]
+ntgt_list = [1, 10]
+
+
+rule all:
+    input:
+        output_dir + "inference/ArchaicSeeker3.0/AS3_Transformer_Smoother_200_100_1000_4803_2src_accuracy.txt"
+
+rule process_bed:
+    input:
+        tgt_vcf = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.tgt.vcf.gz",
+        intro_raw = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/introgression_prediction.bed",
+        mosaic_raw = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/mosaic_merged.bed",
+    output:
+        intro_bed = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Transformer_Smoother_200_100_1000_4803.bed",
+        mosaic_bed = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Transformer_Smoother_200_100_1000_4803.mosaic.bed",
+    params:
+        out_path = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}",
+    threads: 1,
+    shell:
+        """
+        mkdir -p {params.out_path}
+        cd {params.out_path}
+
+        bcftools query -l {input.tgt_vcf} > tgt_samples.txt
+
+        awk '{{
+            for (i = 0; i < NF; i++) {{
+                hap = i * 2
+                print hap, $i "_1"
+                print hap + 1, $i "_2"
+            }}
+        }}' tgt_samples.txt > hapmap.txt
+
+        awk 'NR==FNR {{map[$1]=$2; next}} {{$4 = map[$4]; print}}' hapmap.txt {input.intro_raw} > {output.intro_bed}
+        awk 'NR==FNR {{map[$1]=$2; next}} {{$4 = map[$4]; print}}' hapmap.txt {input.mosaic_raw} > {output.mosaic_bed}
+        """
+
+rule archaicseeker3_process_output:
+    input:
+        seg = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Transformer_Smoother_200_100_1000_4803.bed",
+        src1_true_tracts = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim2src.src1.introgressed.tracts.bed",
+        src2_true_tracts = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim2src.src2.introgressed.tracts.bed",
+    output:
+        src1_inferred_tracts = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Transformer_Smoother_200_100_1000_4803.out.src1.bed",
+        src2_inferred_tracts = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Transformer_Smoother_200_100_1000_4803.out.src2.bed",
+        accuracy = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Transformer_Smoother_200_100_1000_4803.out.accuracy",
+    resources: time_min=3000, mem_mb=10000, cpus=1,
+    threads: 1,
+    run:
+        process_archaicseeker3_output(input.seg, output.src1_inferred_tracts, output.src2_inferred_tracts)
+        src1_precision, src1_recall = cal_accuracy(input.src1_true_tracts, output.src1_inferred_tracts)
+        src2_precision, src2_recall = cal_accuracy(input.src2_true_tracts, output.src2_inferred_tracts)
+        with open(output.accuracy, 'w') as o:
+           o.write(f'{wildcards.demog}\tnref_{wildcards.nref}_ntgt_{wildcards.ntgt}\tsrc1\t-1\t{src1_precision}\t{src1_recall}\n')
+           o.write(f'{wildcards.demog}\tnref_{wildcards.nref}_ntgt_{wildcards.ntgt}\tsrc2\t-1\t{src2_precision}\t{src2_recall}\n')
+
+rule accuracy_summary:
+    input:
+        accuracy_files = expand(output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Transformer_Smoother_200_100_1000_4803.out.accuracy",
+               demog=demo_model_list, nref=nref_list, ntgt=ntgt_list, seed=seed_list)
+    output:
+        accuracy_table = output_dir + "inference/ArchaicSeeker3.0/AS3_Transformer_Smoother_200_100_1000_4803_2src_accuracy.txt",
+    resources: time_min=60, mem_mb=2000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        cat {input.accuracy_files} | sed '1idemography\\tsample\\tsrc\\tcutoff\\tprecision\\trecall' > {output.accuracy_table}
+        """

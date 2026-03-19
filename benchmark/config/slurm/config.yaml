@@ -1,0 +1,3 @@
+cluster: "sbatch -t {resources.time_min} --mem-per-cpu={resources.mem_mb} -c {resources.cpus} -o logs_slurm/{rule}_{wildcards} -e errs_slurm/{rule}_{wildcards} --exclude=cld007"
+latency-wait: 600
+default-resources: [time_min=3000, mem_mb=10000, cpus=1]

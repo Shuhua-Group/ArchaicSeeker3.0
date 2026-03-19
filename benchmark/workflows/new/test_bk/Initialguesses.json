@@ -1,0 +1,24 @@
+{
+  "state_names": [
+    "Human",
+    "Archaic"
+  ],
+  "starting_probabilities": [
+    0.5,
+    0.5
+  ],
+  "transitions": [
+    [
+      0.99,
+      0.01
+    ],
+    [
+      0.02,
+      0.98
+    ]
+  ],
+  "emissions": [
+    0.03,
+    0.3
+  ]
+}

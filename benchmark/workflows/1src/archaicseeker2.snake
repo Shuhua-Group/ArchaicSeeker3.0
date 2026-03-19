@@ -1,0 +1,108 @@
+import sys
+sys.path.insert(0, './')
+
+import numpy as np
+from utils.utils import *
+
+
+configfile: "config/snakemake/config.yaml"
+
+archaicseeker2_exec = config["archaicseeker2_exec"]
+
+output_dir = config["output_dir"]
+replicates = config["replicates"]
+
+np.random.seed(config["seed"])
+
+seed_list = np.random.random_integers(1,2**31,replicates)
+demo_model_list = config["1src_demo_models"]
+
+nref_list = [10, 50]
+ntgt_list = [1, 10]
+
+
+rule all:
+    input:
+        accuracy_table = output_dir + "inference/ArchaicSeeker2.0/archaicseeker2_1src_accuracy.txt",
+        
+
+rule process_vcf:
+    input:
+        vcf = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.biallelic.dup.vcf.gz",
+        ref = "config/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/sim.ref.list",
+        tgt = "config/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/sim.tgt.list",
+        src1 = "config/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/sim.src1.list",
+        src2 = "config/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/sim.src2.list",
+    output:
+        ref = output_dir + "inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.ref.vcf.gz",
+        tgt = output_dir + "inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.tgt.vcf.gz",
+        src1 = output_dir + "inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.src1.vcf.gz",
+        src2 = output_dir + "inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.src2.vcf.gz",
+        par = output_dir + "inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.vcf.par",
+    resources: time_min=3000, mem_mb=10000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        mkdir -p $(dirname {output.ref})
+        bcftools view {input.vcf} -S {input.ref} | bgzip -c > {output.ref}
+        bcftools view {input.vcf} -S {input.tgt} | bgzip -c > {output.tgt}
+        bcftools view {input.vcf} -S {input.src1} | bgzip -c > {output.src1}
+        bcftools view {input.vcf} -S {input.src2} | bgzip -c > {output.src2}
+        echo vcf > {output.par}
+        echo {output.ref} >> {output.par}
+        echo {output.tgt} >> {output.par}
+        echo {output.src1} >> {output.par}
+        echo {output.src2} >> {output.par}
+        """
+
+
+rule archaicseeker2_run:
+    input:
+        vcf_par = output_dir + "inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.vcf.par",
+        remap_par = "config/ArchaicSeeker2.0/{demog}/remap.par",
+        model = "config/ArchaicSeeker2.0/{demog}/model.txt",
+        outgroup_par = "config/ArchaicSeeker2.0/{demog}/outgroup.par",
+        pop_par = "config/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/sim.pop.par",
+        anc_par = "config/ArchaicSeeker2.0/{demog}/anc.par",
+    output:
+        output_dir + "inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/archaicseeker2.out.seg",
+        output_dir + "inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/archaicseeker2.out.sum",
+    params:
+        archaicseeker2_exec = config["archaicseeker2_exec"],
+        output_prefix = output_dir + "inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/archaicseeker2.out",
+    resources: time_min=3000, mem_mb=10000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        {params.archaicseeker2_exec} -v {input.vcf_par} -r {input.remap_par} -m {input.model} -X {input.outgroup_par} -p {input.pop_par} -A {input.anc_par} -o {params.output_prefix}
+        """
+
+
+rule archaicseeker2_process_output:
+    input:
+        seg = output_dir + "inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/archaicseeker2.out.seg",
+        true_tracts = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.introgressed.tracts.bed",
+    output:
+        inferred_tracts = output_dir + "inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/archaicseeker2.out.bed",
+        accuracy = output_dir + "inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/archaicseeker2.out.accuracy",
+    resources: time_min=3000, mem_mb=10000, cpus=1,
+    threads: 1,
+    run:
+        process_archaicseeker2_1src_output(input.seg, output.inferred_tracts)
+        src1_precision, src1_recall = cal_accuracy(input.true_tracts, output.inferred_tracts)
+        with open(output.accuracy, 'w') as o:
+           o.write(f'{wildcards.demog}\tnref_{wildcards.nref}_ntgt_{wildcards.ntgt}\t-1\t{src1_precision}\t{src1_recall}\n')
+
+
+rule accuracy_summary:
+    input:
+        accuracy_files = expand(output_dir + "inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/archaicseeker2.out.accuracy",
+               demog=demo_model_list, nref=nref_list, ntgt=ntgt_list, seed=seed_list)
+    output:
+        accuracy_table = output_dir + "inference/ArchaicSeeker2.0/archaicseeker2_1src_accuracy.txt",
+    resources: time_min=60, mem_mb=2000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        cat {input.accuracy_files} | sed '1idemography\\tsample\\tcutoff\\tprecision\\trecall' > {output.accuracy_table}
+        """

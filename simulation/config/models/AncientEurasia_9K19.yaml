@@ -1,0 +1,74 @@
+time_units: generations
+generation_time: 1
+demes:
+- name: Loschbour
+  description: Western hunter-gatherer (WHG)
+  epochs:
+  - {end_time: 27840.0, start_size: 18200}
+  - {end_time: 3832.0, start_size: 29100.0}
+  - {end_time: 2016.0, start_size: 2340.0}
+  - {end_time: 0, start_size: 1920.0}
+- name: Neanderthal
+  description: Altai Neanderthal from Siberia
+  start_time: 27840.0
+  ancestors: [Loschbour]
+  epochs:
+  - {end_time: 3832.0, start_size: 18200}
+  - {end_time: 2000.0, start_size: 18200.000000000007, end_size: 86.9}
+  - {end_time: 0, start_size: 86.9}
+- name: Mbuti
+  description: Present-day African Mbuti
+  start_time: 3832.0
+  ancestors: [Loschbour]
+  epochs:
+  - {end_time: 0, start_size: 17300}
+- name: BasalEurasian
+  description: Basal Eurasians
+  start_time: 3192.0
+  ancestors: [Loschbour]
+  epochs:
+  - {end_time: 0, start_size: 1920}
+- name: UstIshim
+  description: early Palaeolithic Ust'-Ishim
+  start_time: 2060.0
+  ancestors: [Loschbour]
+  epochs:
+  - {end_time: 0, start_size: 1920}
+- name: Han
+  description: Present-day Han Chinese
+  start_time: 2016.0
+  ancestors: [Loschbour]
+  epochs:
+  - {end_time: 0, start_size: 6300}
+- name: MA1
+  description: Upper Palaeolithic MAl'ta culture
+  start_time: 1796.0
+  ancestors: [Loschbour]
+  epochs:
+  - {end_time: 0, start_size: 1920}
+- name: LBK
+  description: Early European farmer (EEF)
+  start_time: 1508.0
+  ancestors: [Loschbour]
+  epochs:
+  - {end_time: 307.6, start_size: 12000}
+  - {end_time: 0, start_size: 75.7}
+- name: Sardinian
+  description: Present-day Sardinian
+  start_time: 307.6
+  ancestors: [LBK]
+  epochs:
+  - {end_time: 0, start_size: 15000}
+pulses:
+- sources: [Neanderthal]
+  dest: Loschbour
+  time: 2272.0
+  proportions: [0.0296]
+- sources: [BasalEurasian]
+  dest: LBK
+  time: 1348.0
+  proportions: [0.0936]
+- sources: [Loschbour]
+  dest: Sardinian
+  time: 49.2
+  proportions: [0.0317]

@@ -1,0 +1,43 @@
+import sys
+sys.path.insert(0, './')
+
+import numpy as np
+from utils.utils import *
+
+
+configfile: "config/snakemake/config.yaml"
+
+output_dir = config["output_dir"]
+replicates = config["replicates"]
+
+np.random.seed(config["seed"])
+
+seed_list = np.random.random_integers(1,2**31,replicates)
+demo_model_list = config["1src_demo_models"]
+nref_list = [10, 50]
+ntgt_list = [1, 10]
+
+
+rule all:
+    input:
+        expand(
+            output_dir + "inference/ArchaicSeeker3.1/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.ref.vcf.gz",
+            demog=demo_model_list, nref=nref_list, ntgt=ntgt_list, seed=seed_list
+        )
+
+rule process_vcf:
+    input:
+        vcf = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.biallelic.dup.vcf.gz",
+        ref = "config/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/sim.ref.list",
+        tgt = "config/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/sim.tgt.list",
+    output:
+        ref = output_dir + "inference/ArchaicSeeker3.1/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.ref.vcf.gz",
+        tgt = output_dir + "inference/ArchaicSeeker3.1/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.tgt.vcf.gz",
+    resources: time_min=3000, mem_mb=10000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        mkdir -p $(dirname {output.ref})
+        bcftools view {input.vcf} -S {input.ref} | bgzip -c > {output.ref}
+        bcftools view {input.vcf} -S {input.tgt} | bgzip -c > {output.tgt}
+        """

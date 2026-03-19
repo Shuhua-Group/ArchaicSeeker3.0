@@ -1,0 +1,82 @@
+import sys
+sys.path.insert(0, './')
+
+import numpy as np
+from utils.utils import *
+
+# === 载入配置 ===
+configfile: "config/snakemake/config.yaml"
+
+output_dir = config["output_dir"]
+replicates = config["replicates"]
+np.random.seed(config["seed"])
+
+# === 全部变量 ===
+demo_model_list = config["1src_demo_models"]
+nref_list = [10, 50]
+ntgt_list = [1]
+seed_list = list(np.random.randint(1, 2**31, replicates))
+cutoff_list = [0,0.05,0.1,0.2, 0.3, 0.4, 0.5,0.6,  0.7,0.8, 0.9, 0.95]
+
+rule all:
+    input:
+        expand(
+            output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/"
+            "AS3_Mamba_Smoother_4096_2048_5216.out.cutoff.{cutoff}.accuracy",
+            demog=demo_model_list, nref=nref_list, ntgt=ntgt_list, seed=seed_list, cutoff=cutoff_list
+        ),
+        output_dir + "inference/ArchaicSeeker3.0/AS3_Mamba_Smoother_4096_2048_5216_1src_accuracy.txt"
+
+rule archaicseeker3_process_output_cutoff_1src:
+    input:
+        seg = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Mamba_Smoother_4096_2048_5216.bed",
+        true_tracts = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.introgressed.tracts.bed",
+    output:
+        bed = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Mamba_Smoother_4096_2048_5216.out.cutoff.{cutoff}.bed",
+        acc = output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/AS3_Mamba_Smoother_4096_2048_5216.out.cutoff.{cutoff}.accuracy",
+    log:
+        output_dir + "logs/eval_output_cutoffs_{demog}_{nref}_{ntgt}_{seed}_{cutoff}_1src.log",
+    threads: 1,
+    resources: time_min=3000, mem_mb=1000, cpus=1,
+    run:
+        import sys
+        sys.path.insert(0, '/home/linhuanyu/83_AS3_SSTAR/sstar-analysis')
+        from utils.utils import process_archaicseeker3_1src_output, cal_accuracy
+        import traceback
+        from contextlib import redirect_stdout, redirect_stderr
+
+        cutoff = float(wildcards.cutoff)
+
+        with open(log[0], 'w') as f_log:
+            with redirect_stdout(f_log), redirect_stderr(f_log):
+                try:
+                    process_archaicseeker3_1src_output(input.seg, output.bed, cutoff)
+                    precision, recall = cal_accuracy(input.true_tracts, output.bed)
+                    with open(output.acc, 'w') as o:
+                        o.write(f"{wildcards.demog}\tnref_{wildcards.nref}_ntgt_{wildcards.ntgt}\t{cutoff}\t{precision}\t{recall}\n")
+                except Exception:
+                    traceback.print_exc()
+                    with open("/home/linhuanyu/AS3_cutoff_1src_errors.log", "a") as global_log:
+                        global_log.write(f"\n❌ Error: {wildcards.demog}, nref={wildcards.nref}, ntgt={wildcards.ntgt}, seed={wildcards.seed}, cutoff={cutoff}\n")
+                        traceback.print_exc(file=global_log)
+                        global_log.write("\n")
+                    raise
+
+rule archaicseeker3_accuracy_summary:
+    input:
+        accuracy_files = expand(
+            output_dir + "inference/ArchaicSeeker3.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/"
+            "AS3_Mamba_Smoother_4096_2048_5216.out.cutoff.{cutoff}.accuracy",
+            demog=demo_model_list, nref=nref_list, ntgt=ntgt_list, seed=seed_list, cutoff=cutoff_list
+        ),
+    output:
+        accuracy_table = output_dir + "inference/ArchaicSeeker3.0/AS3_Mamba_Smoother_4096_2048_5216_1src_accuracy.txt",
+    log:
+        output_dir + "logs/summary_cutoff_accuracy.log",
+    threads: 1,
+    resources: time_min=3000, mem_mb=1000, cpus=1,
+    shell:
+        """
+        echo -e "demography\tsample\tsrc\tcutoff\tprecision\trecall" > {output.accuracy_table}
+        cat {input.accuracy_files} >> {output.accuracy_table} 2>> {log}
+        """

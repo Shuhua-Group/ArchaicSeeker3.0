@@ -1,0 +1,1 @@
+(((Western:700,Central:700):1290,Bonobo:1990):1510,Ghost:3500);

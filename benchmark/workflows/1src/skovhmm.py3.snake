@@ -1,0 +1,151 @@
+import sys
+sys.path.insert(0, './')
+
+import numpy as np
+from utils.utils import *
+
+
+configfile: "config/snakemake/config.yaml"
+
+output_dir = config["output_dir"]
+replicates = config["replicates"]
+
+np.random.seed(config["seed"])
+
+seed_list = np.random.random_integers(1,2**31,replicates)
+demo_model_list = config["1src_demo_models"]
+cutoff_list = [0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 0.99, 0.999, 0.9999]
+nref_list = [10, 50]
+ntgt_list = [1,10]
+
+
+rule all:
+    input:
+        output_dir + "inference/SkovHMM/skovhmm_1src_accuracy.new.txt",
+
+rule create_outgroup:
+    input:
+        vcf = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.biallelic.vcf.gz",
+        outgroup_file = "config/SkovHMM/{demog}/individuals.ref{nref}.tgt1.json",
+    output:
+        outgroup_freq = output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.outgroup.freq",
+    resources: time_min=3000, mem_mb=10000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        hmmix create_outgroup -ind={input.outgroup_file} -vcf={input.vcf} -out={output.outgroup_freq}
+        """
+
+rule mutation_rate:
+    input:
+        outgroup_freq = rules.create_outgroup.output.outgroup_freq,
+    output:
+        mut_rates = output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.mutrates.bed",
+    resources: time_min=3000, mem_mb=10000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        hmmix mutation_rate -outgroup={input.outgroup_freq} -out={output.mut_rates}
+        """
+
+rule create_ingroup:
+    input:
+        outgroup_freq = rules.create_outgroup.output.outgroup_freq,
+        outgroup_file = "config/SkovHMM/{demog}/individuals.ref{nref}.tgt1.json",
+        vcf = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.biallelic.vcf.gz",
+    output:
+        observations = output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/obs.tsk_{nref}.txt",
+    resources: time_min=3000, mem_mb=10000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        hmmix create_ingroup  -ind={input.outgroup_file} -vcf={input.vcf} -out={output.observations} -outgroup={input.outgroup_freq}
+        mv {output.observations}.tsk_{wildcards.nref}.txt {output.observations}
+        """
+
+rule train:
+    input:
+        mut_rates = rules.mutation_rate.output.mut_rates,
+        observations = rules.create_ingroup.output.observations,
+        init_prob = "config/SkovHMM/{demog}/Initialguesses.json",
+    output:
+        trained = output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/trained.json",
+    resources: time_min=3000, mem_mb=10000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        hmmix train  -obs={input.observations} -mutrates={input.mut_rates} -param={input.init_prob} -out={output.trained} 
+        """
+
+rule decode:
+    input:
+        mut_rates = rules.mutation_rate.output.mut_rates,
+        observations = rules.create_ingroup.output.observations,
+        trained = rules.train.output.trained,
+    output:
+        decode = output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/decode.diploid.txt",
+    resources: time_min=3000, mem_mb=10000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        hmmix decode -obs={input.observations} -mutrates={input.mut_rates} -param={input.trained} -out={output.decode}
+        mv {output.decode}.diploid.txt {output.decode}
+        """
+
+rule skovhmm_process_output:
+    input: 
+        decoded_probs = rules.decode.output.decode,
+        true_tracts = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.introgressed.tracts.bed",
+    output: 
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.05.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.1.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.15.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.2.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.25.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.3.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.35.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.4.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.45.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.5.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.55.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.6.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.65.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.7.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.75.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.8.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.85.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.9.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.95.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.99.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.999.accuracy",
+        output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.0.9999.accuracy",
+    params:
+        win_len = 1000,
+        src_id = 'Archaic',
+        cutoffs = cutoff_list,
+        inferred_tracts = output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff",
+    resources: time_min=3000, mem_mb=10000, cpus=1,
+    threads: 1,
+    run:
+        for i in range(len(params.cutoffs)):
+            cutoff = params.cutoffs[i]
+            inferred_tracts = f'{params.inferred_tracts}.{cutoff}.bed'
+            process_skovhmm_output_new(input.decoded_probs, inferred_tracts, float(cutoff), int(params.win_len), params.src_id)
+            precision, recall, f1 = cal_accuracy_new(input.true_tracts, inferred_tracts)
+            with open(output[i], 'w') as o:
+                o.write(f'{wildcards.demog}\tnref_{wildcards.nref}_ntgt_{wildcards.ntgt}\t{cutoff}\t{precision}\t{recall}\t{f1}\n')
+
+
+rule accuracy_summary:
+    input:
+        accuracy_files = expand(output_dir + "inference/SkovHMM/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/skovhmm.out.cutoff.{cutoff}.accuracy",
+                                demog=demo_model_list, nref=nref_list, ntgt=ntgt_list, seed=seed_list, cutoff=cutoff_list),
+    output:
+        accuracy_table = output_dir + "inference/SkovHMM/skovhmm_1src_accuracy.new.txt",
+    resources: time_min=3000, mem_mb=10000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        cat {input.accuracy_files} | sed '1idemography\\tsample\\tcutoff\\tprecision\\trecall\\tf1' > {output.accuracy_table}
+        """

@@ -1,0 +1,142 @@
+import sys
+sys.path.insert(0, './')
+
+import numpy as np
+from utils.utils import *
+
+
+configfile: "config/snakemake/config.yaml"
+
+map_arch_exec = config["map_arch_exec"]
+score_summary_exec = config["score_summary_exec"]
+sprime_exec = config["sprime_exec"]
+
+replicates = config["replicates"]
+output_dir = config["output_dir"]
+
+np.random.seed(config["seed"])
+
+seed_list = np.random.random_integers(1,2**31,replicates)
+demo_model_list = config["2src_demo_models"]
+threshold_list = [50000]
+nref_list = [10, 50]
+ntgt_list = [1 , 10]
+
+
+rule all:
+    input:
+        output_dir + "inference/SPrime/sprime_2src_accuracy.txt",
+
+
+rule sprime_run:
+    input:
+        gt_file = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim2src.biallelic.vcf.gz",
+        outgroup_file = "config/SPrime/{demog}/nref_{nref}/sim.outgroup.ids",
+        map_file = "config/SPrime/{demog}/sim.map",
+        exsamps = "config/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/sim.excluded.ids",
+    output:
+        log = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.2src.out.{threshold}.log",
+        score = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.2src.out.{threshold}.score",
+    params:
+        sprime_exec = config["sprime_exec"],
+        mu = lambda wildcards: 1.4e-8 if wildcards.demog == 'HumanNeanderthalDenisovan' else 1.2e-8,
+        threshold = lambda wildcards: wildcards.threshold,
+        output_prefix = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.2src.out.{threshold}",
+    resources: time_min=60, mem_mb=2000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        mkdir -p $(dirname {output.log})
+        java -Xmx2g -jar {params.sprime_exec} gt={input.gt_file} outgroup={input.outgroup_file} map={input.map_file} out={params.output_prefix} minscore={params.threshold} mu={params.mu} excludesamples={input.exsamps}
+        """
+
+
+rule match_src:
+    input:
+        score = rules.sprime_run.output.score,
+        src1_vcf = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim2src.src1.biallelic.vcf.gz",
+        src2_vcf = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim2src.src2.biallelic.vcf.gz",
+    output:
+        match_rate = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.2src.out.{threshold}.match.rate",
+    params:
+        map_arch_exec = config["map_arch_exec"],
+        score_summary_exec = config["score_summary_exec"],
+        src1_score = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.2src.out.{threshold}.src1.mscore",
+        src2_score = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.2src.out.{threshold}.src2.mscore",
+        out_dir = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/",
+    resources: time_min=60, mem_mb=100000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        set -euo pipefail
+
+        TMP_SRC1="{params.src1_score}.tmp"
+        TMP_SRC2="{params.src2_score}.tmp"
+        LOG_FILE="{params.out_dir}/match_src.log"
+
+        echo "Running src1 map_arch..." > $LOG_FILE
+        {params.map_arch_exec} --kpall --vcf {input.src1_vcf} --score {input.score} --tag "src1" --sep "\\t" > $TMP_SRC1 2>> $LOG_FILE
+
+        if [[ ! -s $TMP_SRC1 ]]; then
+            echo "[WARNING] Empty src1 mscore: $TMP_SRC1" >> $LOG_FILE
+            echo -e "chr\tseg\tfrom\tto\tsrc1\tsrc2\nNA\tNA\tNA\tNA\tNA\tNA" > {output.match_rate}
+            exit 0
+        fi
+
+        mv $TMP_SRC1 {params.src1_score}
+
+        echo "Running src2 map_arch..." >> $LOG_FILE
+        {params.map_arch_exec} --kpall --vcf {input.src2_vcf} --score {params.src1_score} --tag "src2" --sep "\\t" > $TMP_SRC2 2>> $LOG_FILE
+
+        mv $TMP_SRC2 {params.src2_score}
+        rm -f {params.src1_score}
+
+        echo "Running Rscript to summarize match rate..." >> $LOG_FILE
+        Rscript {params.score_summary_exec} {params.out_dir} {output.match_rate} 2>> $LOG_FILE
+        """
+
+    #shell:
+    #    """
+    #    if [[ $(wc -l {input.score} | awk '{{print $1}}') -gt 1 ]]; then \
+    #    {params.map_arch_exec} --kpall --vcf {input.src1_vcf} --score {input.score} --tag "src1" --sep "\\t" > {params.src1_score};
+    #    {params.map_arch_exec} --kpall --vcf {input.src2_vcf} --score {params.src1_score} --tag "src2" --sep "\\t" > {params.src2_score};
+    #    rm {params.src1_score}
+    #    sleep 10;
+    #    Rscript {params.score_summary_exec} {params.out_dir} {output.match_rate};
+    #    else \
+    #    echo -e "chr seg from to src1 src2\nNA NA NA NA NA NA" > {output.match_rate}; fi
+    #    """
+
+
+rule sprime_process_output:
+    input:
+        match_rate = rules.match_src.output.match_rate,
+        src1_true_tracts = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim2src.src1.introgressed.tracts.bed",
+        src2_true_tracts = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim2src.src2.introgressed.tracts.bed",
+    output: 
+        src1_inferred_tracts = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.2src.out.{threshold}.src1.bed",
+        src2_inferred_tracts = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.2src.out.{threshold}.src2.bed",
+        accuracy = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.2src.out.{threshold}.accuracy",
+    resources: time_min=60, mem_mb=2000, cpus=1,
+    threads: 1,
+    run:
+       process_sprime_match_rate(input.match_rate, output.src1_inferred_tracts, output.src2_inferred_tracts)
+       src1_precision, src1_recall = cal_accuracy(input.src1_true_tracts, output.src1_inferred_tracts)
+       src2_precision, src2_recall = cal_accuracy(input.src2_true_tracts, output.src2_inferred_tracts)
+       with open(output.accuracy, 'w') as o:
+           o.write(f'{wildcards.demog}\tnref_{wildcards.nref}_ntgt_{wildcards.ntgt}\t{wildcards.threshold}\tsrc1\t{src1_precision}\t{src1_recall}\n')
+           o.write(f'{wildcards.demog}\tnref_{wildcards.nref}_ntgt_{wildcards.ntgt}\t{wildcards.threshold}\tsrc2\t{src2_precision}\t{src2_recall}\n')
+
+
+rule accuracy_summary:
+    input:
+        accuracy_files = expand(output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.2src.out.{threshold}.accuracy",
+               demog=demo_model_list, nref=nref_list, ntgt=ntgt_list, seed=seed_list, threshold=threshold_list)
+    output:
+        accuracy_table = output_dir + "inference/SPrime/sprime_2src_accuracy.txt",
+    resources: time_min=60, mem_mb=2000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        cat {input.accuracy_files} | sed '1idemography\\tsample\\tcutoff\\tsrc\\tprecision\\trecall' > {output.accuracy_table}
+        """

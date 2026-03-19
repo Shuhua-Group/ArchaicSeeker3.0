@@ -1,0 +1,12 @@
+tsk_0	AFR
+tsk_1	AFR
+tsk_2	AFR
+tsk_3	AFR
+tsk_4	AFR
+tsk_5	AFR
+tsk_6	AFR
+tsk_7	AFR
+tsk_8	AFR
+tsk_9	AFR
+tsk_20	NEAN
+tsk_21	DEN

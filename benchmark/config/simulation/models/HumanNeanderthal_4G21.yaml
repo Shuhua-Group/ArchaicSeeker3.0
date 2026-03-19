@@ -1,0 +1,37 @@
+# Human-Neantherthal introgression model
+description:
+  A composite hominin model with demographic parameters taken from
+  Gower et al. (2021).
+
+time_units: generations
+
+doi:
+- https://doi.org/10.7554/eLife.64669
+
+demes:
+- name: Anc
+  epochs:
+  - end_time: 2265.5172413793102
+    start_size: 18500.0
+- name: Nea
+  start_time: 18965.51724137931
+  ancestors: [Anc]
+  epochs:
+  - start_size: 3400.0
+- name: CEU
+  ancestors: [Anc]
+  epochs:
+  - end_time: 1100.0
+    start_size: 1080.0
+  - start_size: 1450.0
+    end_size: 13377.357734109575
+- name: YRI
+  ancestors: [Anc]
+  epochs:
+  - start_size: 27000.0
+
+pulses:
+- sources: [Nea]
+  dest: CEU
+  time: 1896.551724137931
+  proportions: [0.0225]

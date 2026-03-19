@@ -1,0 +1,26 @@
+{
+  "ingroup": [
+    "tsk_10",
+    "tsk_11",
+    "tsk_12",
+    "tsk_13",
+    "tsk_14",
+    "tsk_15",
+    "tsk_16",
+    "tsk_17",
+    "tsk_18",
+    "tsk_19"
+  ],
+  "outgroup": [
+    "tsk_0",
+    "tsk_1",
+    "tsk_2",
+    "tsk_3",
+    "tsk_4",
+    "tsk_5",
+    "tsk_6",
+    "tsk_7",
+    "tsk_8",
+    "tsk_9"
+  ]
+}

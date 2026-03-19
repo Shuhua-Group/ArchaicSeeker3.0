@@ -1,0 +1,43 @@
+time_units: generations
+generation_time: 1
+demes:
+- name: Anc
+  epochs:
+  - {end_time: 140000, start_size: 10000}
+- name: Anc_Pan
+  ancestors: [Anc]
+  epochs:
+  - {end_time: 79600, start_size: 11600}
+- name: Ghost
+  ancestors: [Anc]
+  epochs:
+  - {end_time: 0, start_size: 10000}
+- name: Anc_Chimp
+  ancestors: [Anc_Pan]
+  epochs:
+  - {end_time: 28000, start_size: 10200}
+- name: Bonobo
+  ancestors: [Anc_Pan]
+  epochs:
+  - {end_time: 12320, start_size: 3700}
+  - {end_time: 0, start_size: 29100}
+- name: Central
+  ancestors: [Anc_Chimp]
+  epochs:
+  - {end_time: 15120, start_size: 24900}
+  - {end_time: 0, start_size: 65900}
+- name: Western
+  ancestors: [Anc_Chimp]
+  epochs:
+  - {end_time: 10440, start_size: 8000}
+  - {end_time: 0, start_size: 9200}
+migrations:
+- demes: [Bonobo, Anc_Chimp]
+  rate: 1e-07
+  start_time: 60000.0
+  end_time: 48000.0
+- {source: Ghost, dest: Bonobo, start_time: 20001.0, end_time: 20000.0, rate: 0.02}
+- {source: Bonobo, dest: Central, start_time: 6203.0, end_time: 6202.0, rate: 0.00125}
+- {source: Central, dest: Bonobo, start_time: 6203.0, end_time: 6202.0, rate: 0.001}
+- {source: Central, dest: Western, start_time: 4004, end_time: 4003.0, rate: 0.015}
+- {source: Western, dest: Central, start_time: 4004, end_time: 4003.0, rate: 0.005}

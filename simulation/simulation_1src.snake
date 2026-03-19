@@ -1,0 +1,154 @@
+import sys
+sys.path.insert(0, './')
+
+import demes
+import tskit
+import pybedtools
+from utils.utils import *
+
+
+configfile: "config/snakemake/config.yaml"
+
+output_dir = config["output_dir"]
+replicates = config["replicates"]
+seq_len = config["seq_len"] * 10**6
+
+np.random.seed(config["seed"])
+
+seed_list = np.random.random_integers(1,2**31,replicates)
+demo_model_list = config["1src_demo_models"]
+nref_list = [10, 50]
+ntgt_list = [1, 10]
+
+
+rule all:
+    input:
+        expand(output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.trees", 
+               demog=demo_model_list, nref=nref_list, ntgt=ntgt_list, seed=seed_list),
+        expand(output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.biallelic.vcf.gz", 
+               demog=demo_model_list, nref=nref_list, ntgt=ntgt_list, seed=seed_list),
+        expand(output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.introgressed.tracts.bed", 
+               demog=demo_model_list, nref=nref_list, ntgt=ntgt_list, seed=seed_list),
+
+
+rule simulation:
+    input:
+    output:
+        ts = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.trees",
+        vcf = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.vcf",
+    threads: 1,
+    resources: time_min=120, mem_mb=5000, cpus=1,
+    run:        
+        if wildcards.demog == 'BonoboGhost':
+            graph = demes.load("config/simulation/models/BonoboGhost_4K19.yaml")
+            demography = msprime.Demography.from_demes(graph)
+            ref_id = 'Western'
+            tgt_id = 'Bonobo'
+            src1 = 'Ghost'
+            mutation_rate = 1.2e-8
+            recombination_rate = 0.7e-8
+            samples = [
+                msprime.SampleSet(int(wildcards.nref), ploidy=2, population=ref_id),
+                msprime.SampleSet(int(wildcards.ntgt), ploidy=2, population=tgt_id),
+                msprime.SampleSet(1, ploidy=2, population=src1),
+            ]
+
+        if wildcards.demog == 'HumanNeanderthal':
+            graph = demes.load("config/simulation/models/HumanNeanderthal_4G21.yaml")
+            demography = msprime.Demography.from_demes(graph)
+            ref_id = 'YRI'
+            tgt_id = 'CEU'
+            src1 = 'Nea'
+            T_Nea = 47650 / 25
+            mutation_rate = 1.29e-8
+            recombination_rate = 1e-8
+            samples = [
+                msprime.SampleSet(int(wildcards.nref), ploidy=2, population=ref_id),
+                msprime.SampleSet(int(wildcards.ntgt), ploidy=2, population=tgt_id),
+                msprime.SampleSet(1, ploidy=2, population=src1, time=T_Nea),
+            ]
+        
+        if wildcards.demog == 'OOANeanderthal':
+            graph = demes.load("config/simulation/models/OutOfAfricaExtendedNeandertalAdmixturePulse_3I21.yaml")
+            demography = msprime.Demography.from_demes(graph)
+            ref_id = 'YRI'
+            tgt_id = 'CEU'
+            src1 = 'NEA'
+            mutation_rate = 1.29e-8
+            recombination_rate = 1e-8
+
+            samples = [
+                msprime.SampleSet(int(wildcards.nref), ploidy=2, population=ref_id),
+                msprime.SampleSet(int(wildcards.ntgt), ploidy=2, population=tgt_id),
+                msprime.SampleSet(1, ploidy=2, population=src1),
+            ]
+
+        
+        if wildcards.demog == 'AncientEurasia':
+            graph = demes.load("config/simulation/models/AncientEurasia_9K19.yaml")
+            demography = msprime.Demography.from_demes(graph)
+            ref_id = 'Mbuti'
+            tgt_id = 'Loschbour'
+            src1 = 'Neanderthal'
+            T_Nea = 2272
+            mutation_rate = 1.29e-8
+            recombination_rate = 1e-8
+            
+            samples = [
+                msprime.SampleSet(int(wildcards.nref), ploidy=2, population=ref_id),
+                msprime.SampleSet(int(wildcards.ntgt), ploidy=2, population=tgt_id),
+                msprime.SampleSet(1, ploidy=2, population=src1, time=T_Nea),
+            ]
+
+
+
+        ts = run_simulation(demography=demography, samples=samples, mut_rate=mutation_rate, recomb_rate=recombination_rate, sequence_length=seq_len, random_seed=wildcards.seed)
+        ts.dump(output.ts)
+
+        with open(output.vcf, 'w') as o:
+            ts.write_vcf(o)
+
+
+rule get_tracts:
+    input:
+        ts = rules.simulation.output.ts,
+    output:
+        tracts = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.introgressed.tracts.bed",
+    threads: 1,
+    resources: time_min=120, mem_mb=5000, cpus=1,
+    run:
+        ts = tskit.load(input.ts)
+
+        if wildcards.demog == 'BonoboGhost':
+            src_id = "Ghost"
+            tgt_id = "Bonobo"
+
+        if wildcards.demog == 'HumanNeanderthal':
+            src_id = "Nea"
+            tgt_id = "CEU"
+        
+        if wildcards.demog == 'OOANeanderthal':
+            src_id = "NEA"
+            tgt_id = "CEU"
+
+        if wildcards.demog == 'AncientEurasia':
+            src_id = "Neanderthal"
+            tgt_id = "Han"
+
+        get_introgressed_tracts(ts, chr_name=1, src_name=src_id, tgt_name=tgt_id, output=output.tracts)
+
+
+rule get_biallelic_vcf:
+    input:
+        vcf = rules.simulation.output.vcf,
+    output:
+        vcf = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.vcf.gz",
+        bvcf = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.biallelic.vcf.gz",
+    threads: 1,
+    resources: time_min=120, mem_mb=5000, cpus=1,
+    shell:
+        """
+        bcftools view {input.vcf} -m 2 -M 2 | awk -F "\\t" 'BEGIN{{OFS="\\t";ORS=""}}{{if($0~/^#/){{print $0"\\n"}}else{{print $1,$2,$3,"A","T\\t";for(i=6;i<NF;i++){{print $i"\\t"}};print $NF"\\n"}}}}' | bgzip -c > {output.bvcf}
+        bgzip -c {input.vcf} > {output.vcf}
+        rm {input.vcf}
+        """

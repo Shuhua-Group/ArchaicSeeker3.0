@@ -1,0 +1,21 @@
+output_dir: "/home/linhuanyu/share1/20_AS3/results/"
+config_dir: "/home/linhuanyu/83_AS3_SSTAR/sstar-analysis/config/"
+replicates: 100
+seed: 12345
+seq_len: 50
+1src_demo_models: ['HumanNeanderthal', 'BonoboGhost','OOANeanderthal','AncientEurasia','Skov_HumanDenisovan']
+# 1src_demo_models: ['OOANeanderthal','AncientEurasia']
+# 1src_demo_models: ['AncientEurasia']
+2src_demo_models: ['HumanNeanderthalDenisovan', 'ChimpBonoboGhost','HumanArchaic','AS2_HumanNeanderthalDenisovan']
+# 2src_demo_models: ['HumanArchaic']
+demo_models: ['HumanNeanderthal', 'BonoboGhost','OOANeanderthal','AncientEurasia','Skov_HumanDenisovan','HumanNeanderthalDenisovan', 'ChimpBonoboGhost','HumanArchaic','AS2_HumanNeanderthalDenisovan']
+
+archaicseeker2_exec: "ext/ArchaicSeeker2.0/libnlopt.so.0_free/ArchaicSeeker2"
+map_arch_exec: "/home/linhuanyu/83_AS3_SSTAR/sstar-analysis/ext/SPrime/sprimepipeline/pub.pipeline.pbs/tools/map_arch_genome/map_arch"
+score_summary_exec: "/home/linhuanyu/83_AS3_SSTAR/sstar-analysis/ext/SPrime/sprimepipeline/pub.pipeline.pbs/tools/score_summary.r"
+ms_exec: "ext/msdir/ms"
+skovhmm_exec_filter: "ext/SkovHMM/FiltervariantsNOancestral.py"
+skovhmm_exec_train: "ext/SkovHMM/Train.py"
+skovhmm_exec_decode: "ext/SkovHMM/Decode.py"
+skovhmm_exec_env: "config/SkovHMM/env.yaml"
+sprime_exec: "ext/SPrime/sprime.jar"

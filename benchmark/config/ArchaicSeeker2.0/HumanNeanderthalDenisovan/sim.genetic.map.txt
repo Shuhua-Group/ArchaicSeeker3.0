@@ -1,0 +1,3 @@
+position rate(cM/Mb) genetic_map(cM)
+1 1 0
+200000000 0 200

@@ -1,0 +1,14 @@
+time_units: generations
+generation_time: 1
+demes:
+- name: YRI
+  description: 1000 Genomes YRI (Yoruba)
+  epochs:
+  - {end_time: 0, start_size: 10000}
+- name: CEU
+  description: 1000 Genomes CEU (Utah Residents (CEPH) with Northern and Western European
+    Ancestry)
+  start_time: 2550
+  ancestors: [YRI]
+  epochs:
+  - {end_time: 0, start_size: 10000}

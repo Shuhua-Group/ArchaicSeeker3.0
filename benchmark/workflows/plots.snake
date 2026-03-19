@@ -1,0 +1,37 @@
+configfile: "config/snakemake/config.yaml"
+
+output_dir = config["output_dir"]
+
+
+rule all:
+    input:
+        expand(output_dir + "plots/{table}", table=[
+                   "sstar.1src.mean.accuracy.txt",
+                   "sprime.1src.mean.accuracy.txt",
+                   "skovhmm.1src.mean.accuracy.txt",
+                   "sstar.2src.mean.accuracy.txt",
+                   "sprime.2src.mean.accuracy.txt",
+                   "archaicseeker2.2src.mean.accuracy.txt",
+               ]),
+        output_dir + "plots/precision-recall.pdf",
+
+
+rule plot_accuracy:
+    input:
+        sstar_1src_accuracy = output_dir + "inference/sstar/sstar_1src_accuracy.txt",
+        sprime_1src_accuracy = output_dir + "inference/SPrime/sprime_1src_accuracy.txt",
+        skovhmm_1src_accuracy = output_dir + "inference/SkovHMM/skovhmm_1src_accuracy.txt",
+        sstar_2src_accuracy = output_dir + "inference/sstar/sstar_2src_accuracy.txt",
+        sprime_2src_accuracy = output_dir + "inference/SPrime/sprime_2src_accuracy.txt",
+        archaicseeker2_2src_accuracy = output_dir + "inference/ArchaicSeeker2.0/archaicseeker2_2src_accuracy.txt",
+    output:
+        sstar_1src_accuracy_mean = output_dir + "plots/sstar.1src.mean.accuracy.txt",
+        sprime_1src_accuracy_mean = output_dir + "plots/sprime.1src.mean.accuracy.txt",
+        skovhmm_1src_accuracy_mean = output_dir + "plots/skovhmm.1src.mean.accuracy.txt",
+        sstar_2src_accuracy_mean = output_dir + "plots/sstar.2src.mean.accuracy.txt",
+        sprime_2src_accuracy_mean = output_dir + "plots/sprime.2src.mean.accuracy.txt",
+        archaicseeker2_2src_accuracy_mean = output_dir + "plots/archaicseeker2.2src.mean.accuracy.txt",
+        accuracy = output_dir + "plots/precision-recall.pdf",
+    threads: 1,
+    script:
+        "plots.py"

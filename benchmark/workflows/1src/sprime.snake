@@ -1,0 +1,79 @@
+configfile: "config/snakemake/config.yaml"
+
+import sys
+sys.path.insert(0, './')
+
+import numpy as np
+from utils.utils import *
+
+
+# configfile: "config/snakemake/config.yaml"
+
+sprime_exec = config["sprime_exec"]
+
+replicates = config["replicates"]
+output_dir = config["output_dir"]
+
+np.random.seed(config["seed"])
+
+seed_list = np.random.random_integers(1,2**31,replicates)
+demo_model_list = config["1src_demo_models"]
+threshold_list = [50000]
+nref_list = [10, 50]
+ntgt_list = [1,10]
+
+
+rule all:
+    input:
+       output_dir + "inference/SPrime/sprime_1src_accuracy.txt",
+
+
+rule sprime_run:
+    input:
+        gt_file = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.biallelic.vcf.gz",
+        outgroup_file = "config/SPrime/{demog}/sim.{nref}.outgroup.ids",
+        map_file = "config/SPrime/{demog}/sim.map",
+    output:
+        log = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.1src.out.{threshold}.log",
+        score = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.1src.out.{threshold}.score",
+    params:
+        sprime_exec = config["sprime_exec"],
+        mu = lambda wildcards: 1.29e-8 if wildcards.demog == 'HumanNeanderthal' else 1.2e-8,
+        threshold = lambda wildcards: wildcards.threshold,
+        output_prefix = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.1src.out.{threshold}"
+    resources: time_min=60, mem_mb=2000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        java -Xmx2g -jar {params.sprime_exec} gt={input.gt_file} outgroup={input.outgroup_file} map={input.map_file} out={params.output_prefix} minscore={params.threshold} mu={params.mu}
+        """
+
+
+rule sprime_process_output:
+    input: 
+        scores = rules.sprime_run.output.score,
+        true_tracts = output_dir + "simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.introgressed.tracts.bed",
+    output: 
+        inferred_tracts = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.1src.out.{threshold}.bed",
+        accuracy = output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.1src.out.{threshold}.accuracy",
+    resources: time_min=60, mem_mb=2000, cpus=1,
+    threads: 1,
+    run:
+       process_sprime_output(input.scores, output.inferred_tracts)
+       precision, recall = cal_accuracy(input.true_tracts, output.inferred_tracts)
+       with open(output.accuracy, 'w') as o:
+           o.write(f'{wildcards.demog}\tnref_{wildcards.nref}_ntgt_{wildcards.ntgt}\t{wildcards.threshold}\t{precision}\t{recall}\n')
+
+
+rule accuracy_summary:
+    input:
+        accuracy_files = expand(output_dir + "inference/SPrime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/{threshold}/sprime.1src.out.{threshold}.accuracy",
+               demog=demo_model_list, nref=nref_list, ntgt=ntgt_list, seed=seed_list, threshold=threshold_list)
+    output:
+        accuracy_table = output_dir + "inference/SPrime/sprime_1src_accuracy.txt",
+    resources: time_min=60, mem_mb=2000, cpus=1,
+    threads: 1,
+    shell:
+        """
+        cat {input.accuracy_files} | sed '1idemography\\tsample\\tcutoff\\tprecision\\trecall' > {output.accuracy_table}
+        """

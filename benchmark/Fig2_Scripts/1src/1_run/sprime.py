@@ -1,0 +1,118 @@
+import sys
+import os
+import subprocess
+
+# 加载自己写的工具包路径
+sys.path.insert(0, "/home/linhuanyu/83_AS3_SSTAR/sstar-analysis")
+# from utils.utils import process_sprime_output, cal_accuracy
+
+# 获取命令行参数
+demog, nref, ntgt, seed = sys.argv[1:5]
+nref = int(nref)
+ntgt = int(ntgt)
+seed = int(seed)
+
+# 配置参数
+threshold = 50000
+output_dir = "/home/linhuanyu/share1/20_AS3/results"
+sprime_exec = "/home/linhuanyu/83_AS3_SSTAR/sstar-analysis/ext/SPrime/sprime.jar"  # SPrime程序路径
+map_arch_exec = "/home/linhuanyu/83_AS3_SSTAR/sstar-analysis/ext/SPrime/sprimepipeline/pub.pipeline.pbs/tools/map_arch_genome/map_arch"
+score_summary_exec = "/home/linhuanyu/83_AS3_SSTAR/sstar-analysis/ext/SPrime/sprimepipeline/pub.pipeline.pbs/tools/score_summary.r"
+
+# 根据demog设置mu
+mu = 1.29e-8 if demog == 'HumanNeanderthal' else 1.2e-8
+
+# 输入文件路径
+gt_file = os.path.join(output_dir, f"simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.biallelic.vcf.gz")
+outgroup_file = f"/home/linhuanyu/83_AS3_SSTAR/sstar-analysis/config/SPrime/{demog}/sim.{nref}.outgroup.ids"
+map_file = f"/home/linhuanyu/83_AS3_SSTAR/sstar-analysis/config/SPrime/{demog}/sim.map"
+
+# 输出路径
+prefix = os.path.join(output_dir, f"inference/Sprime/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}")
+output_prefix = os.path.join(prefix, "sprime.out")
+# accuracy_file = output_prefix + ".accuracy"
+
+# # 检查 accuracy 文件是否已存在，存在就跳过
+# if os.path.exists(accuracy_file):
+#     print(f"⚡ {accuracy_file} already exists. Skipping...")
+#     sys.exit(0)
+
+# 确保输出目录存在
+os.makedirs(prefix, exist_ok=True)
+
+# 构建命令
+cmd = (
+    f"java -Xmx5g -jar {sprime_exec} "
+    f"gt={gt_file} outgroup={outgroup_file} map={map_file} "
+    f"out={output_prefix} minscore={threshold} mu={mu}"
+)
+
+# 打印并执行
+print(f"🚀 Running command:\n{cmd}")
+
+try:
+    subprocess.run(cmd, shell=True, check=True)
+except subprocess.CalledProcessError as e:
+    print(f"❌ SPrime执行失败: {e}")
+    sys.exit(1)
+
+print("✅ SPrime执行完成，开始匹配源群...")
+
+score_file = output_prefix + ".score"
+src1_vcf = f"/home/linhuanyu/share1/20_AS3/results/inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.src1.vcf.gz"
+src2_vcf = f"/home/linhuanyu/share1/20_AS3/results/inference/ArchaicSeeker2.0/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim.src2.vcf.gz"
+
+src1_score_tmp = output_prefix + ".src1.mscore.tmp"
+src1_score_final = output_prefix + ".src1.mscore"
+src2_score_tmp = output_prefix + ".src2.mscore"
+match_rate_output = output_prefix + ".match.rate"
+
+cmd_src1 = f"{map_arch_exec} --kpall --vcf {src1_vcf} --score {score_file} --tag src1 --sep '\\t' > {src1_score_tmp}"
+print(f"🚀 Mapping src1:\n{cmd_src1}")
+subprocess.run(cmd_src1, shell=True, check=True)
+
+if os.path.exists(src1_score_tmp) and os.path.getsize(src1_score_tmp) > 0:
+    os.rename(src1_score_tmp, src1_score_final)
+else:
+    print(f"⚠️ 警告: src1匹配为空，填充NA结果")
+    with open(match_rate_output, 'w') as f:
+        f.write("chr\tseg\tfrom\tto\tsrc1\tsrc2\nNA\tNA\tNA\tNA\tNA\tNA\n")
+    sys.exit(0)
+
+cmd_src2 = f"{map_arch_exec} --kpall --vcf {src2_vcf} --score {src1_score_final} --tag src2 --sep '\\t' > {src2_score_tmp}"
+print(f"🚀 Mapping src2:\n{cmd_src2}")
+subprocess.run(cmd_src2, shell=True, check=True)
+
+
+os.remove(src1_score_final)
+
+cmd_rscript = f"Rscript {score_summary_exec} {prefix} {match_rate_output}"
+print(f"🚀 Summarizing match rate:\n{cmd_rscript}")
+subprocess.run(cmd_rscript, shell=True, check=True)
+
+print("✅ 匹配完成，开始处理预测区段...")
+
+
+
+
+
+
+
+
+
+# # 定义处理阶段的输入输出文件
+# scores_file = output_prefix + ".score"
+# true_tracts_file = os.path.join(output_dir, f"simulated_data/{demog}/nref_{nref}/ntgt_{ntgt}/{seed}/sim1src.introgressed.tracts.bed")
+# inferred_tracts_file = output_prefix + ".bed"
+
+# # 处理sprime输出
+# process_sprime_output(scores_file, inferred_tracts_file)
+
+# # 计算准确率
+# precision, recall = cal_accuracy(true_tracts_file, inferred_tracts_file)
+
+# # 写入accuracy文件
+# with open(accuracy_file, 'w') as f:
+#     f.write(f'{demog}\tnref_{nref}_ntgt_{ntgt}\t{threshold}\t{precision:.4f}\t{recall:.4f}\n')
+
+# print(f"🎯 全部完成！{demog}, nref={nref}, ntgt={ntgt}, seed={seed}, threshold={threshold}")
