@@ -175,9 +175,10 @@ parallel GPU execution. Set its input/output paths and GPU list, then run:
 bash 01.run_archaicseeker3.sh
 ```
 
-### Direct Execution (Advanced)
+### Run a Single Chromosome Directly
 
-For debugging or running on a single file, you can execute the main program directly.
+To analyze a single chromosome without the multi-chromosome wrapper script,
+run ArchaicSeeker3 directly:
 
 **Basic Command:**
 ```bash
