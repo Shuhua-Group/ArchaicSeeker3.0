@@ -1338,6 +1338,18 @@ def extract_snp_details_for_segments(seg_df, pos_array, hap_state_arrays, probab
     return snp_details
 
 
+SNP_DETAILS_COLUMNS = [
+    'chr',
+    'sample_hap_id',
+    'start_pos',
+    'end_pos',
+    'snp_positions',
+    'snp_states',
+    'snp_prob_label1',
+    'snp_prob_label2',
+]
+
+
 def write_snp_details_file(snp_details_list, filepath):
     """
     Write SNP details to gzip-compressed TSV file
@@ -1346,11 +1358,7 @@ def write_snp_details_file(snp_details_list, filepath):
         snp_details_list: List[dict] of SNP details
         filepath: Output file path (.gz extension)
     """
-    if not snp_details_list:
-        logging.warning("No SNP details to write")
-        return
-
-    df = pd.DataFrame(snp_details_list)
+    df = pd.DataFrame(snp_details_list, columns=SNP_DETAILS_COLUMNS)
 
     try:
         with gzip.open(filepath, 'wt', encoding='utf-8') as f:
@@ -1358,33 +1366,25 @@ def write_snp_details_file(snp_details_list, filepath):
         logging.info(f"Written {len(snp_details_list)} segment SNP details to {filepath}")
     except Exception as e:
         logging.error(f"Error writing SNP details file: {e}")
+        raise
 
 
-# Note: The following inference_and_write with simple signature is not used.
-# The actual function with chunk processing parameters is defined below.
-# This signature mismatch version is commented out to avoid confusion.
-
-"""
-def inference_and_write(base_model, smoother_model, test_loader, args, pred_file_path, bed_file_path, info):
-    # This version is NOT USED - see the version with hap_id_to_name_map, is_first_chunk parameters below
-    pass
-"""
-
-#ACTIVE VERSION: With raw.bed and SNP details output support
-def inference_and_write(base_model, smoother_model, test_loader, args,
-                        pred_file_path, bed_file_path, info,
+# ACTIVE VERSION: raw BED and SNP-detail output support
+def inference_and_write(base_model, smoother_model, test_loader,
+                        pred_file_path, raw_bed_path, raw_snps_path, info,
                         hap_id_to_name_map,
                         is_first_chunk, current_index, current_index_filter):
     """
-    RAW BED OUTPUT VERSION: Outputs both raw.bed and merged.bed files with SNP details
+    Write unmerged raw BED segments and SNP details.
 
     This function:
-    - Outputs TWO BED files:
-      * *.raw.bed - Pre-merge segments (merge_distance=0)
-      * *.bed - Merged segments (merge_distance=args.merge)
+    - outputs *.raw.bed with merge_distance=0;
     - Outputs SNP details file (*.raw.snps.gz) for exact merge replication
     - Uses 10-column BED format (NO cM columns)
     - Maintains all memFast optimizations (batched writes, memory-efficient data types)
+
+    Canonical filtering, exact merge, and ancestry-specific BED splitting are
+    performed once after every sample chunk has completed.
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     base_model.eval().to(device)
@@ -1401,8 +1401,7 @@ def inference_and_write(base_model, smoother_model, test_loader, args,
     # Batch results before writing to disk
     WRITE_BATCH_SIZE = 10
     pred_batch_buffer = []
-    bed_batch_buffer_raw = []      # For raw.bed
-    bed_batch_buffer_merged = []   # For merged.bed
+    bed_batch_buffer_raw = []       # For raw.bed
     snp_details_buffer = []         # For raw.snps.gz
 
     with torch.no_grad():
@@ -1505,40 +1504,6 @@ def inference_and_write(base_model, smoother_model, test_loader, args,
                 final_bed_df_raw = final_bed_df_raw.sort_values(by=['sample_hap_id', 'chr', 'start_pos', 'end_pos'])
                 bed_batch_buffer_raw.append(final_bed_df_raw)
 
-            # 2. Generate MERGED segments (merge_distance=args.merge)
-            seg_df_merged = find_introgression_segments(
-                df_T,
-                haplotype_columns,
-                probabilities_np,
-                Chr=chm,
-                merge_distance=args.merge,
-                max_snp_gap_threshold=1_000_000,
-                min_snps_per_segment=2,
-                mosaic_minority_threshold=0.2
-            )
-
-            if not seg_df_merged.empty:
-                # Prepare merged BED output (10 columns, NO cM)
-                final_bed_df_merged = seg_df_merged.rename(columns={
-                    'label': 'ancestry_label',
-                    'snps': 'num_snps',
-                    'prob': 'avg_prob',
-                    'n_snps_label1': 'archaic_snps',
-                    'n_snps_label2': 'african_snps'
-                })
-                final_bed_df_merged['sample_hap_id'] = final_bed_df_merged['haplotype'].map(hap_id_to_name_map)
-                final_bed_df_merged['sample_hap_id'].fillna('Unknown_HapID', inplace=True)
-
-                # 10 columns output (NO cM columns)
-                output_columns_10 = [
-                    'chr', 'start_pos', 'end_pos',
-                    'haplotype', 'ancestry_label', 'num_snps', 'avg_prob',
-                    'archaic_snps', 'african_snps', 'sample_hap_id'
-                ]
-                final_bed_df_merged = final_bed_df_merged[output_columns_10]
-                final_bed_df_merged = final_bed_df_merged.sort_values(by=['sample_hap_id', 'chr', 'start_pos', 'end_pos'])
-                bed_batch_buffer_merged.append(final_bed_df_merged)
-
             current_index_filter += a.shape[0]
 
             # Write to disk every WRITE_BATCH_SIZE batches or at the end
@@ -1563,288 +1528,31 @@ def inference_and_write(base_model, smoother_model, test_loader, args,
                 # Write raw.bed batched data
                 if bed_batch_buffer_raw:
                     combined_bed_df_raw = pd.concat(bed_batch_buffer_raw, ignore_index=True)
-                    raw_bed_path = bed_file_path.replace('.bed', '.raw.bed')
                     bed_mode = 'a'
                     if is_first_chunk and i < WRITE_BATCH_SIZE:
                         bed_mode = 'w'
                     combined_bed_df_raw.to_csv(raw_bed_path, sep='\t', mode=bed_mode, index=False, header=False)
                     bed_batch_buffer_raw.clear()
 
-                # Write merged.bed batched data
-                if bed_batch_buffer_merged:
-                    combined_bed_df_merged = pd.concat(bed_batch_buffer_merged, ignore_index=True)
-                    bed_mode = 'a'
-                    if is_first_chunk and i < WRITE_BATCH_SIZE:
-                        bed_mode = 'w'
-                    combined_bed_df_merged.to_csv(bed_file_path, sep='\t', mode=bed_mode, index=False, header=False)
-                    bed_batch_buffer_merged.clear()
-
-    # Write SNP details file at the end of each chunk
-    if snp_details_buffer:
-        snp_details_path = bed_file_path.replace('.bed', '.raw.snps.gz')
-        if is_first_chunk:
-            # First chunk: write with header
-            write_snp_details_file(snp_details_buffer, snp_details_path)
-        else:
-            # Subsequent chunks: append without header
-            try:
-                with gzip.open(snp_details_path, 'rt', encoding='utf-8') as f:
-                    existing_df = pd.read_csv(f, sep='\t')
-                new_df = pd.DataFrame(snp_details_buffer)
-                combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-                with gzip.open(snp_details_path, 'wt', encoding='utf-8') as f:
-                    combined_df.to_csv(f, sep='\t', index=False, header=True)
-                logging.info(f"Appended {len(snp_details_buffer)} SNP details to {snp_details_path}")
-            except Exception as e:
-                logging.error(f"Error appending SNP details: {e}")
+    # Initialize the gzip even when the first chunk has no calls. This keeps the
+    # raw output contract stable and lets a later non-empty chunk append safely.
+    if is_first_chunk or not os.path.isfile(raw_snps_path):
+        write_snp_details_file(snp_details_buffer, raw_snps_path)
+    elif snp_details_buffer:
+        try:
+            with gzip.open(raw_snps_path, 'rt', encoding='utf-8') as f:
+                existing_df = pd.read_csv(f, sep='\t')
+            new_df = pd.DataFrame(snp_details_buffer, columns=SNP_DETAILS_COLUMNS)
+            combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+            with gzip.open(raw_snps_path, 'wt', encoding='utf-8') as f:
+                combined_df.to_csv(f, sep='\t', index=False, header=True)
+            logging.info(f"Appended {len(snp_details_buffer)} SNP details to {raw_snps_path}")
+        except Exception as e:
+            logging.error(f"Error appending SNP details: {e}")
+            raise
 
     return current_index, current_index_filter
 
-"""
-def inference_and_write(base_model, smoother_model, test_loader, args, 
-                                      pred_file_path, bed_file_path, info, 
-                                      hap_id_to_name_map,
-                                      is_first_chunk, current_index, current_index_filter):
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    base_model.eval().to(device)
-    smoother_model.eval().to(device)
-    
-    chm = info['chm'][0]
-    
-    # STAGE 1 & 2: 数据收集与pred.tsv写入 (这部分逻辑保持不变)
-    num_haplotypes_in_chunk = len(test_loader.dataset.mixed_vcf)
-    bed_data_collectors = {
-        'labels': [[] for _ in range(num_haplotypes_in_chunk)],
-        'pos': [[] for _ in range(num_haplotypes_in_chunk)],
-        'probs': [[] for _ in range(num_haplotypes_in_chunk)],
-    }
-    hap_offset_in_chunk = 0
-
-    with torch.no_grad():
-        progress_bar = tqdm(enumerate(test_loader), 
-                            total=len(test_loader), 
-                            desc=f"Processing Chromosome {chm} (Chunk)", 
-                            unit="batch",
-                            leave=False) 
-        
-        for i, batch in progress_bar:
-            batch = to_device(batch, device)
-            
-            # --- 模型推理与数据准备 (与之前版本相同) ---
-            basemodel_output = base_model(batch, test=True, infer=True)
-            pad_num = basemodel_output.get("pad_num", 0)
-            preds = basemodel_output["predictions"]
-            pos_for_smoother = (batch["pos"].to(preds.device) / 1000000 / 100).to(preds.device) + torch.zeros([preds.shape[0], 1, preds.shape[2]], dtype=torch.float32).to(preds.device)
-            output = smoother_model(preds, pos=pos_for_smoother)
-            output = torch.nn.functional.pad(output, (0, pad_num), value=0)
-            probabilities = torch.softmax(output, dim=1)
-            predicted_labels = torch.argmax(probabilities, dim=1)
-            
-            batch_size = batch['mixed_vcf'].shape[0]
-            reshaped_probs = probabilities.reshape(batch_size, 3, -1, 512).reshape(batch_size, 3, -1)
-            reshaped_labels = predicted_labels.reshape(batch_size, -1, 512).reshape(batch_size, -1)
-            if pad_num > 0:
-                reshaped_probs = reshaped_probs[:, :, :-pad_num]
-                reshaped_labels = reshaped_labels[:, :-pad_num]
-            
-            # --- pred.tsv 写入逻辑 (保持不变) ---
-            original_pos = [int(p) for p in info['pos']]
-            original_pos_array = np.array(original_pos, dtype=int)
-            max_pos = original_pos_array.max()
-            pos_to_idx_array = -np.ones(max_pos + 1, dtype=int)
-            pos_to_idx_array[original_pos_array] = np.arange(len(original_pos_array))
-            sample_label_for_tsv = reshaped_labels[0].cpu().numpy().astype(int)
-            sample_pos_for_tsv = batch["pos"][0].cpu().numpy().astype(int)
-            valid_mask_tsv = (sample_pos_for_tsv >= 0) & (sample_pos_for_tsv <= max_pos)
-            valid_pos_tsv = sample_pos_for_tsv[valid_mask_tsv]
-            valid_labels_tsv = sample_label_for_tsv[valid_mask_tsv]
-            mapped_indices_tsv = pos_to_idx_array[valid_pos_tsv]
-            if np.any(mapped_indices_tsv == -1):
-                 raise KeyError("Invalid positions found for pred.tsv generation.")
-            labels_tsv = np.zeros(len(original_pos_array), dtype=int)
-            labels_tsv[mapped_indices_tsv] = valid_labels_tsv
-            df_tsv = pd.DataFrame([labels_tsv], columns=original_pos)
-            df_tsv.index = range(current_index, current_index + len(df_tsv))
-            txt_mode = 'a'
-            if is_first_chunk and i == 0:
-                txt_mode = 'w'
-            df_tsv.to_csv(pred_file_path, sep="\t", mode=txt_mode, header=False, index=True)
-            current_index += len(df_tsv)
-            
-            # --- 为 BED 文件聚合数据 (保持不变) ---
-            for hap_idx_in_batch in range(batch_size):
-                true_hap_idx = hap_offset_in_chunk
-                bed_data_collectors['labels'][true_hap_idx].append(reshaped_labels[hap_idx_in_batch].cpu().numpy())
-                bed_data_collectors['pos'][true_hap_idx].append(batch["pos"][hap_idx_in_batch].cpu().numpy())
-                bed_data_collectors['probs'][true_hap_idx].append(reshaped_probs[hap_idx_in_batch].cpu().numpy().astype(float))
-                hap_offset_in_chunk += 1
-
-    # STAGE 3: BED 文件生成 (所有单倍型结果收集完毕后)
-    all_segments_to_write = []
-    for hap_idx in range(num_haplotypes_in_chunk):
-        if not bed_data_collectors['labels'][hap_idx]:
-            continue
-
-        full_pred_labels = np.concatenate(bed_data_collectors['labels'][hap_idx])
-        full_pred_pos = np.concatenate(bed_data_collectors['pos'][hap_idx])
-        full_pred_probs = np.concatenate(bed_data_collectors['probs'][hap_idx], axis=1)
-
-        valid_mask = full_pred_pos >= 0
-        full_pred_labels = full_pred_labels[valid_mask]
-        full_pred_pos = full_pred_pos[valid_mask]
-        full_pred_probs = full_pred_probs[:, valid_mask]
-        
-        df_T = pd.DataFrame({hap_idx: full_pred_labels}, index=full_pred_pos)
-        df_T.index.name = 'POS'
-        df_T = df_T.reset_index()
-
-        # 确保这里调用的是重构后的 find_introgression_segments_refactored
-        introgression_segments_df = find_introgression_segments(
-            df_T, 
-            haplotype_columns=[hap_idx],
-            probabilities=[full_pred_probs],
-            Chr=chm, 
-            merge_distance=args.merge,
-            max_snp_gap_threshold=1_000_000,
-            min_snps_per_segment=2,
-            mosaic_minority_threshold=0.2
-        )
-        
-        if not introgression_segments_df.empty:
-            all_segments_to_write.append(introgression_segments_df)
-
-    # STAGE 4: 最终处理与写入 (所有单倍型片段合并后)
-    if all_segments_to_write:
-        final_bed_df = pd.concat(all_segments_to_write, ignore_index=True)
-        
-        # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 核心修正点 1: 排序逻辑 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-        # 先按单倍型ID排序，再按起始位置排序，确保Hap 0的结果总在Hap 1之前
-        final_bed_df = final_bed_df.sort_values(by=['haplotype', 'start_pos'])
-        # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ 核心修正点 1: 排序逻辑 ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-
-        # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 核心修正点 2: 添加SampleHapID列 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-        # 'haplotype'列现在是数字ID(0, 1, ...)，我们用它来生成最终的名称ID
-        final_bed_df['sample_hap_id'] = final_bed_df['haplotype'].apply(
-            lambda hap_idx: hap_id_to_name_map.get(current_index_filter + hap_idx, f"unknown_hap_{current_index_filter + hap_idx}")
-        )
-        # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ 核心修正点 2: 添加SampleHapID列 ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-        
-        bed_mode = 'a'
-        if is_first_chunk:
-            bed_mode = 'w'
-        
-        final_bed_df.to_csv(bed_file_path, sep='\t', mode=bed_mode, index=False, header=False)
-
-    current_index_filter += num_haplotypes_in_chunk
-    return current_index, current_index_filter
-"""
-
-"""
-def inference_and_write(base_model, smoother_model, test_loader, args, 
-                        pred_file_path, bed_file_path, info, 
-                        hap_id_to_name_map,
-                        is_first_chunk, current_index, current_index_filter):
-    
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    base_model.eval().to(device)
-    smoother_model.eval().to(device)
-    
-    chm = info['chm'][0]
-    num_haplotypes_in_chunk = len(test_loader.dataset.mixed_vcf)
-
-    data_collectors = {
-        'labels': [[] for _ in range(num_haplotypes_in_chunk)],
-        'pos': [[] for _ in range(num_haplotypes_in_chunk)],
-        'probs': [[] for _ in range(num_haplotypes_in_chunk)],
-    }
-    hap_offset_in_chunk = 0
-    
-    original_pos = [int(p) for p in info['pos']]
-    original_pos_array = np.array(original_pos, dtype=int)
-    max_pos = 0
-    if len(original_pos_array) > 0: max_pos = original_pos_array.max()
-    pos_to_idx_array = -np.ones(max_pos + 1, dtype=int)
-    pos_to_idx_array[original_pos_array] = np.arange(len(original_pos_array))
-
-    with torch.no_grad():
-        progress_bar = tqdm(enumerate(test_loader), total=len(test_loader), 
-                            desc=f"Processing Chromosome {chm} (Chunk)", unit="batch", leave=False) 
-        
-        for i, batch in progress_bar:
-            batch = to_device(batch, device)
-            basemodel_output = base_model(batch, test=True, infer=True)
-            pad_num = basemodel_output.get("pad_num", 0)
-            preds = basemodel_output["predictions"]
-            pos_for_smoother = (batch["pos"].to(preds.device) / 1000000 / 100).to(preds.device) + torch.zeros([preds.shape[0], 1, preds.shape[2]], dtype=torch.float32).to(preds.device)
-            output = smoother_model(preds, pos=pos_for_smoother)
-            output = torch.nn.functional.pad(output, (0, pad_num), value=0)
-            probabilities = torch.softmax(output, dim=1)
-            predicted_labels = torch.argmax(probabilities, dim=1)
-            
-            batch_size = batch['mixed_vcf'].shape[0]
-            reshaped_probs = probabilities.reshape(batch_size, 3, -1, 512).reshape(batch_size, 3, -1)
-            reshaped_labels = predicted_labels.reshape(batch_size, -1, 512).reshape(batch_size, -1)
-            if pad_num > 0 and reshaped_labels.shape[1] > pad_num:
-                reshaped_probs = reshaped_probs[:, :, :-pad_num]
-                reshaped_labels = reshaped_labels[:, :-pad_num]
-
-            for hap_idx_in_batch in range(batch_size):
-                true_hap_idx = hap_offset_in_chunk
-                data_collectors['labels'][true_hap_idx].append(reshaped_labels[hap_idx_in_batch].cpu().numpy())
-                data_collectors['pos'][true_hap_idx].append(batch["pos"][hap_idx_in_batch].cpu().numpy())
-                data_collectors['probs'][true_hap_idx].append(reshaped_probs[hap_idx_in_batch].cpu().numpy().astype(float))
-                hap_offset_in_chunk += 1
-
-    all_segments_to_write = []
-    all_labels_for_tsv = []
-    for hap_idx in range(num_haplotypes_in_chunk):
-        if not data_collectors['labels'][hap_idx]: continue
-
-        full_pred_labels = np.concatenate(data_collectors['labels'][hap_idx])
-        full_pred_pos = np.concatenate(data_collectors['pos'][hap_idx])
-        full_pred_probs = np.concatenate(data_collectors['probs'][hap_idx], axis=1)
-
-        valid_mask = full_pred_pos >= 0
-        full_pred_labels = full_pred_labels[valid_mask]
-        full_pred_pos = full_pred_pos[valid_mask]
-        full_pred_probs = full_pred_probs[:, valid_mask]
-        
-        mapped_indices = pos_to_idx_array[full_pred_pos]
-        if np.any(mapped_indices == -1):
-             raise KeyError(f"Haplotype {hap_idx}: Invalid positions found.")
-        labels_for_one_hap = np.zeros(len(original_pos_array), dtype=int)
-        labels_for_one_hap[mapped_indices] = full_pred_labels
-        all_labels_for_tsv.append(labels_for_one_hap)
-
-        df_T = pd.DataFrame({hap_idx: full_pred_labels}, index=full_pred_pos)
-        df_T.index.name = 'POS'
-        df_T = df_T.reset_index()
-        
-        introgression_segments_df = find_introgression_segments(df=df_T, haplotype_columns=[hap_idx], probabilities=[full_pred_probs], Chr=int(''.join(filter(str.isdigit, chm))), merge_distance=args.merge)
-        
-        if not introgression_segments_df.empty:
-            all_segments_to_write.append(introgression_segments_df)
-
-    if all_labels_for_tsv:
-        hap_real_names = [hap_id_to_name_map.get(current_index_filter + i, f"unknown_hap_{i}") for i in range(len(all_labels_for_tsv))]
-        df_pred = pd.DataFrame(all_labels_for_tsv, columns=original_pos, index=hap_real_names)
-        txt_mode = 'a'; write_header = False
-        if is_first_chunk: txt_mode = 'w'; write_header = True
-        df_pred.to_csv(pred_file_path, sep="\t", mode=txt_mode, header=write_header, index=True)
-        current_index += len(df_pred)
-
-    if all_segments_to_write:
-        final_bed_df = pd.concat(all_segments_to_write, ignore_index=True)
-        final_bed_df = final_bed_df.sort_values(by=['haplotype', 'start_pos'])
-        final_bed_df['sample_hap_id'] = final_bed_df['haplotype'].apply(lambda hap_idx: hap_id_to_name_map.get(current_index_filter + hap_idx, f"unknown_hap_{current_index_filter + hap_idx}"))
-        bed_mode = 'a'
-        if is_first_chunk: bed_mode = 'w'
-        final_bed_df.to_csv(bed_file_path, sep='\t', mode=bed_mode, index=False, header=False)
-
-    current_index_filter += num_haplotypes_in_chunk
-    return current_index, current_index_filter
-"""
 
 class CustomBatchSampler(Sampler):
     def __init__(self, datasets, batch_size):

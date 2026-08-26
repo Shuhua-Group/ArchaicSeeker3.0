@@ -18,6 +18,15 @@ import pysam
 from src.dataloaders import ReferencePanelDataset, ChunkedReferencePanelDataset, reference_panel_collate
 from src.models import AgnosticModelInferNoSmoother, AncestryLevelConvSmoother
 from src.stepsagnostic import inference_and_write, build_transforms
+from src.standard_postprocess import (
+    ANCESTRY_BED_NAMES,
+    COMBINED_BED_NAME,
+    RAW_BED_NAME,
+    RAW_SNPS_NAME,
+    STANDARD_MIN_LENGTH_BP,
+    STANDARD_MIN_SCORE,
+    run_standard_postprocess,
+)
 
 def set_global_seed(seed):
     random.seed(seed)
@@ -72,7 +81,12 @@ def setup_arg_parser():
     parser.add_argument("--smoother-model-args", type=str, default=None, help="Path to the smoother model arguments pckl file. If None, it's derived from the checkpoint path.")
     
     parser.add_argument("--stride", type=int, default=512, help="Window stride for inference.")
-    parser.add_argument("--merge", type=int, default=10000, help="Merge threshold for segments, default: 5000bp.")
+    parser.add_argument(
+        "--merge",
+        type=int,
+        default=10000,
+        help="Maximum gap (bp) for the canonical exact merge (default: 10000).",
+    )
     parser.add_argument("--anc", type=int, default=0, help="Archaic parameter setting.")
 
     parser.add_argument("--test-mixed", '-t', type=str, required=True, help="Path to the PHASED test mixed VCF file (Required).")
@@ -167,6 +181,9 @@ def main():
     parser = setup_arg_parser()
     args = parser.parse_args()
 
+    if args.merge < 0:
+        parser.error("--merge must be non-negative")
+
     os.makedirs(args.out_folder, exist_ok=True)
     setup_logging(args.out_folder)
     
@@ -213,11 +230,24 @@ def main():
     
     logging.info(f"Total target samples: {total_samples}. Processing in {num_chunks} chunk(s) of size {chunk_size}.")
 
-    output_txt_path = os.path.join(args.out_folder, 'introgression_prediction.txt')
-    output_bed_path = os.path.join(args.out_folder, 'introgression_prediction.bed')
-    
-    open(output_txt_path, 'w').close()
-    open(output_bed_path, 'w').close()
+    output_dir = Path(args.out_folder)
+    output_txt_path = str(output_dir / 'introgression_prediction.txt')
+    raw_bed_path = str(output_dir / RAW_BED_NAME)
+    raw_snps_path = str(output_dir / RAW_SNPS_NAME)
+
+    # Start every run from clean output files while preserving the public CLI.
+    Path(output_txt_path).write_text("", encoding="utf-8")
+    Path(raw_bed_path).write_text("", encoding="utf-8")
+    for stale_output in [
+        Path(raw_snps_path),
+        output_dir / COMBINED_BED_NAME,
+        *[output_dir / name for name in ANCESTRY_BED_NAMES.values()],
+        output_dir / "introgression_prediction.bed",
+        output_dir / "introgression_prediction.raw.bed",
+        output_dir / "introgression_prediction.raw.snps.gz",
+    ]:
+        if stale_output.exists():
+            stale_output.unlink()
 
     current_index_counter = 0
     current_index_filter_counter = 0
@@ -276,8 +306,8 @@ def main():
             info = test_dataset.info
 
             current_index_counter, current_index_filter_counter = inference_and_write(
-                baseModel, smootherModel, test_loader, args,
-                output_txt_path, output_bed_path, info,
+                baseModel, smootherModel, test_loader,
+                output_txt_path, raw_bed_path, raw_snps_path, info,
                 hap_id_to_name_map,
                 is_first_chunk=(i == 0),
                 current_index=current_index_counter,
@@ -288,6 +318,23 @@ def main():
             sys.exit(1)
 
     logging.info("All chunks processed successfully.")
+
+    logging.info(
+        "Building canonical outputs: raw length >= %d bp, raw score >= %s, exact merge gap <= %d bp",
+        STANDARD_MIN_LENGTH_BP,
+        STANDARD_MIN_SCORE,
+        args.merge,
+    )
+    try:
+        postprocess_summary = run_standard_postprocess(
+            output_dir,
+            merge_distance=args.merge,
+        )
+    except Exception:
+        logging.error("Canonical BED post-processing failed.", exc_info=True)
+        sys.exit(1)
+
+    logging.info("Canonical post-processing summary: %s", postprocess_summary)
     logging.info(f"Final output files are located in: {args.out_folder}")
     
     total_time = time.time() - start_time

@@ -68,7 +68,6 @@ for GPU in "${GPUS[@]}"; do
           -t "${target_vcf}" \
           -r "${ref_vcf}" \
           -m "${MAP_FILE}" \
-          --merge 5000 \
           -o "${outdir}"
           
         echo "  [GPU ${GPU}] <== chr${K} processing finished."
