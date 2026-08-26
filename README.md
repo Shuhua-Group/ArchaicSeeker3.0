@@ -17,8 +17,9 @@ This repository provides the core software and example scripts to demonstrate ho
 
 If you use `ArchaicSeeker3.1-mamba` in your research, please cite our relevant publications. For a list of publications, please visit our group's website: [POG Fudan Publications](https://pog.fudan.edu.cn/#/article).
 
-> **Citation:**
-> unpublished
+> Wang B, Lei C, Lin H, Shi S, Ma X, Zeng W, Yuan K, Ni X, Xu S.
+> [**ArchaicSeeker 3.0: A deep-learning framework for scalable, haplotype-resolved inference of archaic introgression**](https://www.biorxiv.org/content/10.64898/2026.05.05.722798v1).
+> *bioRxiv* 2026.05.05.722798 (2026). https://doi.org/10.64898/2026.05.05.722798
 
 ---
 
@@ -248,8 +249,7 @@ only the corresponding rows.
 
 Although these files use a `.bed` suffix, AS3 preserves the 1-based VCF SNP
 positions rather than converting them to standard 0-based, half-open BED
-coordinates. Historical AS3 length thresholds are therefore evaluated exactly
-as `End - Start`, as shown below.
+coordinates. AS3 length thresholds are evaluated as `End - Start`.
 
 ### 2. Raw and SNP-level outputs
 
@@ -263,18 +263,6 @@ post-processing step.
 -   **Rows**: Haplotype indices.
 -   **Columns**: Variant positions.
 -   **Values**: Predicted ancestry: `0`=African (non-introgressed), `1`=Denisovan, `2`=Neanderthal.
-
-### 3. Optional strict filtering
-
-The historical high-confidence tract definition (`length >= 15 kb` and
-`score >= 0.85`) is intentionally not part of the default AS3 algorithm. It is
-a direct row filter on the already merged `introgression.bed`; it does not merge
-segments or recalculate scores:
-
-```bash
-awk 'BEGIN{OFS="\t"} ($3-$2)>=15000 && $7>=0.85' \
-  introgression.bed > introgression.strict.bed
-```
 
 ## Contact
 
