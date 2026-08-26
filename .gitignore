@@ -1,0 +1,18 @@
+# Python runtime and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Workflow/runtime metadata
+.snakemake/
+.ipynb_checkpoints/
+
+# Local environments and editor state
+.venv/
+venv/
+.idea/
+.vscode/
+
+# OS-generated files
+.DS_Store
+Thumbs.db

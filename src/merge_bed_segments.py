@@ -2,16 +2,16 @@
 """
 BED Segment Merger (No Genetic Map Version)
 
-This standalone script takes a raw BED file (from ArchaicSeeker3 with merge_distance=0)
-and merges nearby segments of the same ancestry label.
+This standalone script takes a raw BED file (from ArchaicSeeker3 with
+merge_distance=0) and merges nearby segments.
 
 This version is designed for BED files WITHOUT genetic map (NO cM columns).
 
 Usage:
-    python merge_bed_segments.py --input raw.bed --output merged.bed --merge-distance 5000
+    python merge_bed_segments.py --input raw.bed --output merged.bed --merge-distance 10000
 
 Features:
-    - Merges segments of the same label within specified distance
+    - Exact mode merges by sample/haplotype regardless of the pre-merge label
     - Uses 10-column BED format (NO cM columns)
     - Recalculates statistics (num_snps, avg_prob) after merging
     - Supports exact merge mode using SNP details file
@@ -411,14 +411,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
-  # Basic merge with 5kb distance
-  python merge_bed_segments.py -i raw.bed -o merged.bed -d 5000
+  # Basic merge with 10kb distance
+  python merge_bed_segments.py -i raw.bed -o merged.bed -d 10000
 
   # Filter before merging
-  python merge_bed_segments.py -i raw.bed -o merged.bed -d 5000 --min-snps 5 --min-prob 0.8
+  python merge_bed_segments.py -i raw.bed -o merged.bed -d 10000 --min-snps 5 --min-prob 0.8
 
   # Exclude Mosaic segments (label=3)
-  python merge_bed_segments.py -i raw.bed -o merged.bed -d 5000 --max-label 2
+  python merge_bed_segments.py -i raw.bed -o merged.bed -d 10000 --max-label 2
 
   # No merge (just filter and reformat)
   python merge_bed_segments.py -i raw.bed -o filtered.bed -d 0 --min-snps 10
@@ -429,8 +429,8 @@ Examples:
                         help='Input BED file (raw segments)')
     parser.add_argument('-o', '--output', required=True,
                         help='Output BED file (merged segments)')
-    parser.add_argument('-d', '--merge-distance', type=int, default=5000,
-                        help='Maximum distance (bp) to merge segments (default: 5000)')
+    parser.add_argument('-d', '--merge-distance', type=int, default=10000,
+                        help='Maximum distance (bp) to merge segments (default: 10000)')
 
     # Filtering options
     parser.add_argument('--min-snps', type=int, default=None,

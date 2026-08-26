@@ -34,7 +34,7 @@ Please see the `LICENSE` file for detailed terms.
 
 ## Installation
 
-We provide two methods for installation. The automated script is recommended for most users.
+The automated installation script is recommended for most users.
 
 ### Prerequisites
 
@@ -44,7 +44,7 @@ We provide two methods for installation. The automated script is recommended for
 
 ---
 
-### Method 1: Recommended Installation via Script
+### Recommended Installation via Script
 
 This method uses the provided `install.sh` script to automatically create a conda environment and handle all dependencies, including complex ones.
 
@@ -65,57 +65,114 @@ This method uses the provided `install.sh` script to automatically create a cond
 
 ---
 
-### Method 2: Installation from `environment.yml`
-
-This is an alternative for users familiar with conda.
-
-1.  **Create the environment from the YAML file:**
-    ```bash
-    conda env create -f environment.yml
-    ```
-
-2.  **Activate the environment:**
-    ```bash
-    conda activate as3_mamba
-    ```
-> **Note:** If you encounter errors with this method, they are likely related to building `mamba-ssm` or `causal-conv1d`. We recommend using **Method 1** in such cases.
-
----
-
 ## Data Preparation
 
-For your convenience, we provide archaic reference data panels.
+For convenience, we provide ready-to-use reference data. With the preprocessed
+Ref1028 panel, users only need to prepare a phased input VCF for the target
+samples. A custom reference panel is needed only when the supplied panel is not
+suitable for the intended analysis.
 
 * Download the data for either **GRCh38** or **CHM13** from Zenodo record:
     **[https://zenodo.org/records/14552025](https://zenodo.org/records/14552025)**
+
+### Direct downloads from the AS3 web service
+
+The following GRCh38 data are available as public, read-only static downloads and can be used directly without an AS3 web account:
+
+#### Ref1028 reference panel
+
+**[Browse the Ref1028 release](https://pog.fudan.edu.cn/as3-downloads/reference-panel/Ref1028/)**
+
+This is the exact chromosome-wise panel currently configured in the AS3 web service. For chromosome `N`, download all of the following:
+
+```text
+Ref_Panel.chrN.vcf.gz
+Ref_Panel.chrN.vcf.gz.tbi
+Ref_Panel.map.txt
+```
+
+Example for chromosome 22:
+
+```bash
+wget https://pog.fudan.edu.cn/as3-downloads/reference-panel/Ref1028/Ref_Panel.chr22.vcf.gz
+wget https://pog.fudan.edu.cn/as3-downloads/reference-panel/Ref1028/Ref_Panel.chr22.vcf.gz.tbi
+wget https://pog.fudan.edu.cn/as3-downloads/reference-panel/Ref1028/Ref_Panel.map.txt
+```
+
+The VCF can be supplied directly to `--reference`, and `Ref_Panel.map.txt` can be supplied directly to `--map`.
+
+The panel contains four high-coverage archaic genomes—`AltaiNeandertal`,
+`Vindija33.19`, `Chagyrskaya-Phalanx`, and `Denisova`—together with the modern
+human reference samples used by AS3.
+
+After downloading the chromosome-specific panel and map into the current
+directory, the only analysis input that users need to supply is their phased
+target VCF. For example, for chromosome 22:
+
+```bash
+TARGET_VCF=/path/to/input.phased.chr22.vcf.gz
+CUDA_VISIBLE_DEVICES=0 python ArchaicSeeker3.1-mamba \
+  -t "${TARGET_VCF}" \
+  -r Ref_Panel.chr22.vcf.gz \
+  -m Ref_Panel.map.txt \
+  -o as3_chr22
+```
+
+#### GRCh38 3N1D high-quality-region masks
+
+**[Browse the GRCh38 3N1D mask release](https://pog.fudan.edu.cn/as3-downloads/high-quality-mask/GRCh38/3N1D/)**
+
+The source FilterBeds for three high-coverage Neanderthal genomes (Altai, Vindija33.19 and Chagyrskaya) and one Denisovan genome were lifted from hg19 to GRCh38. For each chromosome, the four lifted BEDs were concatenated, coordinate-sorted and combined with `bedtools merge`; these files therefore represent the merged union of the four source pass-interval sets.
+
+Two equivalent chromosome naming styles are provided:
+
+```text
+chrN_mask.bed       # chromosome column: 1, 2, ...
+chrN_mask.wchr.bed  # chromosome column: chr1, chr2, ...
+```
+
+Choose the file matching the chromosome convention in your VCF. The mask is directly usable by interval-aware tools, for example:
+
+```bash
+bcftools view -T chr22_mask.wchr.bed -Oz -o input.high_quality.vcf.gz input.vcf.gz
+```
+
+The bundled `00.preprocess.sh` example currently expects separate `N_chrN.bed` and `D_chrN.bed` files. To use the combined 3N1D release, apply the BED directly as above or adapt that mask stage to use one combined file.
+
+These masks are intended for users building or filtering a custom reference
+panel. They are not required when using the downloadable preprocessed Ref1028
+panel.
+
+Each release directory contains a `README.txt` and `SHA256SUMS`. Static downloads support HTTP range requests, so interrupted downloads can be resumed.
+
+### AS3 Web for single-chromosome analyses
+
+For a single chromosome, we recommend the hosted
+**[ArchaicSeeker3 Web service](https://pog.fudan.edu.cn/as3web/)**. Register an
+account, wait for administrator approval, upload a phased chromosome VCF, and
+submit a `Real AS3` task with the supplied reference panel. The web service is
+the simplest option when local GPU setup or custom reference preparation is not
+required.
 
 ---
 
 ## Usage Workflow
 
-The analysis is divided into two main steps, managed by two separate scripts.
+The recommended path is to use the downloadable Ref1028 VCF and map directly,
+as in the chromosome 22 quick-start command above. No reference-panel
+preprocessing is required.
 
-### Step 1: Pre-processing Raw VCFs (Optional)
+Use `00.preprocess.sh` only when building a custom reference panel. Configure
+all paths in its **User Configuration** section before running it; the repository
+does not bundle the placeholder `examples/raw_data` files. The script produces
+`Final_Target_VCFs`, `Final_Ref_VCFs`, and `reference.map`.
 
-This step is only necessary if you want to process your own raw VCF files instead of using our pre-processed data.
+For a configured multi-chromosome dataset, `01.run_archaicseeker3.sh` provides
+parallel GPU execution. Set its input/output paths and GPU list, then run:
 
-1.  **Configure the script:** Open `00.preprocess.sh` and set the paths to your input data and desired output directories.
-2.  **Run the script:**
-    ```bash
-    bash 00.preprocess.sh
-    ```
-This script will normalize and filter your VCF files, generating the `Final_Target_VCFs`, `Final_Ref_VCFs`, and `reference.map` files required for the next step.
-
-
-### Step 2: Running ArchaicSeeker3 Analysis
-
-This script runs the main ArchaicSeeker3 analysis in parallel across all chromosomes.
-
-1.  **Configure the script:** Open `01.run_archaicseeker3.mamba.all.chr.sh` and set the paths to your input data (from Step 1 or Zenodo), the desired output directory, and your GPU configuration.
-2.  **Run the script:**
-    ```bash
-    bash 01.run_archaicseeker3.mamba.all.chr.sh
-    ```
+```bash
+bash 01.run_archaicseeker3.sh
+```
 
 ### Direct Execution (Advanced)
 
@@ -142,50 +199,82 @@ CUDA_VISIBLE_DEVICES=0 python ArchaicSeeker3.1-mamba \
 | `--base-model-cp`| | Path to the base model checkpoint (`.pth`). | Defaults to `./exp/Basemodel.../best_model.pth` |
 | `--smoother-model-cp`| | Path to the smoother model checkpoint (`.pth`). | Defaults to `./exp/Smoother.../best_model.pth` |
 | `--stride` | | The stride of the sliding window for model inference. | `512` |
-| `--merge` | | The distance threshold (bp) for merging adjacent introgressed segments. | `5000` |
+| `--merge` | | Maximum gap (bp) for the canonical exact merge. | `10000` |
 | `--anc` | | Archaic parameter setting for analysis. | `0` |
 | `--target-chunk-size`| | Process target samples in chunks of this size to reduce memory usage. `None` means all at once. | `None` |
 | `--base-model-args`| | Path to the base model's arguments file (`.pckl`). If `None`, auto-detected. | `None` |
 | `--smoother-model-args`| | Path to the smoother model's arguments file (`.pckl`). If `None`, auto-detected. | `None` |
 
-
-### Parallel Analysis via Shell Script
-
-For convenience, we provide an example script `run_analysis.sh` to parallelize the analysis of a whole genome (chromosomes 1-22) across multiple GPUs.
-
-1.  **Configure the script**:
-    Open `run_analysis.sh` and modify the variables at the top: `wk_path`, `aseek` (which should point to your `main.py` script), and `gpus`.
-2.  **Run the script**:
-    ```bash
-    bash run_analysis.sh
-    ```
-
 ## Output Format
 
-The primary output files are `introgression_prediction.bed` and `introgression_prediction.txt`.
+AS3 now performs its standard BED construction internally. The default command:
 
-### 1. `introgression_prediction.bed`
-This file lists the predicted archaic introgression segments.
+1. retains raw segments with length `>= 5 kb` and score `>= 0`;
+2. exact-merges retained segments with the `--merge` distance (default `10 kb`);
+3. recalculates ancestry label, SNP counts, and mean score from the raw SNP details;
+4. writes the combined result and ancestry-specific BED files.
+
+The standard output files are:
+
+```text
+introgression.bed
+introgression.denisovan.bed
+introgression.neanderthal.bed
+introgression.mosaic.bed
+introgression.raw.bed
+introgression.raw.snps.gz
+introgression_prediction.txt
+run.log
+```
+
+### 1. `introgression.bed`
+
+This is the canonical combined result after the standard 5 kb pre-filter and
+exact merge. The three ancestry-specific BEDs use the same format and contain
+only the corresponding rows.
 
 | Column | Description |
 | :--- | :--- |
 | **Chr** | Chromosome |
-| **Start** | Start position of the segment (0-based) |
-| **End** | End position of the segment (0-based) |
-| **Haplotype** | Haplotype index relative to the start of a processed chunk. |
+| **Start** | First supporting VCF `POS` value (1-based, inclusive) |
+| **End** | Last supporting VCF `POS` value (1-based, inclusive) |
+| **Haplotype** | Internal numeric haplotype index used during inference. |
 | **Archaic** | Predicted source: `1`=Denisovan, `2`=Neanderthal, `3`=Mosaic |
 | **#SNP** | Number of SNPs within the segment |
-| **Score** | Mean score of all SNPs in the segment. A higher score indicates higher confidence. A score > 0.4 is recommended. |
+| **Score** | Mean score recalculated from the SNPs supporting the final merged label. A higher score indicates higher confidence. |
 | **#SNP_Archaic1** | Number of SNPs supporting Archaic Source 1 |
 | **#SNP_Archaic2** | Number of SNPs supporting Archaic Source 2 |
 | **SampleID_HapID** | A globally unique identifier combining the original Sample ID and haplotype (1 or 2). |
 
-### 2. `introgression_prediction.txt`
-This file provides SNP-level prediction results.
+Although these files use a `.bed` suffix, AS3 preserves the 1-based VCF SNP
+positions rather than converting them to standard 0-based, half-open BED
+coordinates. Historical AS3 length thresholds are therefore evaluated exactly
+as `End - Start`, as shown below.
+
+### 2. Raw and SNP-level outputs
+
+`introgression.raw.bed` preserves the unmerged segment calls, and
+`introgression.raw.snps.gz` preserves the SNP-level evidence used for exact
+merge and custom reprocessing. These files are not overwritten by the standard
+post-processing step.
+
+`introgression_prediction.txt` provides the SNP-level ancestry matrix:
 
 -   **Rows**: Haplotype indices.
 -   **Columns**: Variant positions.
 -   **Values**: Predicted ancestry: `0`=African (non-introgressed), `1`=Denisovan, `2`=Neanderthal.
+
+### 3. Optional strict filtering
+
+The historical high-confidence tract definition (`length >= 15 kb` and
+`score >= 0.85`) is intentionally not part of the default AS3 algorithm. It is
+a direct row filter on the already merged `introgression.bed`; it does not merge
+segments or recalculate scores:
+
+```bash
+awk 'BEGIN{OFS="\t"} ($3-$2)>=15000 && $7>=0.85' \
+  introgression.bed > introgression.strict.bed
+```
 
 ## Contact
 
